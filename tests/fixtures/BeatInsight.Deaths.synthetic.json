@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "deaths": [
+    {
+      "Id": "synthetic-failure",
+      "MapKey": "synthetic-map___3___Standard",
+      "Date": 4000,
+      "SongTimeSeconds": 25,
+      "IsPractice": false,
+      "Modifiers": { "NoBombs": true, "Obstacles": "all", "SpeedPreset": "faster", "SpeedMultiplier": 1.2, "Additional": {} }
+    },
+    {
+      "Id": "synthetic-practice-to-ignore",
+      "MapKey": "synthetic-map___3___Standard",
+      "Date": 5000,
+      "SongTimeSeconds": 30,
+      "IsPractice": true
+    }
+  ]
+}

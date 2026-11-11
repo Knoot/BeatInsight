@@ -1,0 +1,7 @@
+{
+  "synthetic-map___3___Standard": [
+    { "Date": 1000, "ModifiedScore": 100, "RawScore": 100, "LastNote": 10, "Param": 0 },
+    { "Date": 2000, "ModifiedScore": 150, "RawScore": 150, "LastNote": 10, "Param": 2 },
+    { "Date": 3000, "ModifiedScore": 300, "RawScore": 300, "LastNote": -1, "Param": 0 }
+  ]
+}

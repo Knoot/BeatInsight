@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(WallAlertSource)" Link="Reference/WallAnalyzer.cs" Condition="'$(WallAlertSource)' != ''" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+  <Target Name="ValidateWallAlertSource" BeforeTargets="CoreCompile">
+    <Error Condition="'$(WallAlertSource)' == '' or !Exists('$(WallAlertSource)')" Text="Set WallAlertSource in paths.props, BEATINSIGHT_WALLALERT_SOURCE or -p:WallAlertSource." />
+  </Target>
+</Project>

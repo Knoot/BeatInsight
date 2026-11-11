@@ -1,0 +1,16 @@
+<Project>
+  <!-- Copy to paths.props in the project root and fill in machine-specific values there. -->
+  <PropertyGroup>
+    <GameRoot Condition="'$(GameRoot)' == ''"></GameRoot>
+    <MapsRoot></MapsRoot>
+    <!-- Optional nonstandard cache; use a trailing directory separator for MSBuild. -->
+    <NuGetPackageRoot Condition="'$(NuGetPackageRoot)' == ''"></NuGetPackageRoot>
+    <WallAlertSource Condition="'$(WallAlertSource)' == ''"></WallAlertSource>
+    <!-- CecilPath is optional: the default uses the standard NuGet package cache. -->
+    <CecilPath Condition="'$(CecilPath)' == ''"></CecilPath>
+    <!-- Optional comparison-only dependencies; paths relative to GameRoot or absolute locally. -->
+    <ReferenceAnalysisAssembly></ReferenceAnalysisAssembly>
+    <ReferencePreviewAssembly></ReferencePreviewAssembly>
+    <ReferenceUtilityAssembly></ReferenceUtilityAssembly>
+  </PropertyGroup>
+</Project>

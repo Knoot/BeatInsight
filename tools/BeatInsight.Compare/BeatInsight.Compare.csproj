@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/BeatInsight.Core/BeatInsight.Core.csproj" />
+    <ProjectReference Include="../../src/BeatInsight.Formats/BeatInsight.Formats.csproj" />
+    <ProjectReference Include="../../src/BeatInsight.WallAlert/BeatInsight.WallAlert.csproj" />
+    <Reference Include="Mono.Cecil"><HintPath>$(CecilPath)</HintPath></Reference>
+    <Reference Include="BeatmapCore"><HintPath>$(GameRoot)\Beat Saber_Data\Managed\BeatmapCore.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameRoot)\Beat Saber_Data\Managed\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <Target Name="ValidateLocalDependencies" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="'$(GameRoot)' == ''" Text="Set GameRoot in paths.props, BEATINSIGHT_GAME_ROOT or -p:GameRoot." />
+    <Error Condition="!Exists('$(CecilPath)')" Text="Mono.Cecil not found. Restore the package or configure CecilPath." />
+  </Target>
+</Project>

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "maps": [
+    { "Folder": "1021d (Judgement Day - nitronik.exe)", "Characteristic": "Standard", "Difficulty": "ExpertPlus", "Reason": "v2, обычная плотность" },
+    { "Folder": "10377 (Hocus Pocus - ETAN)", "Characteristic": "Standard", "Difficulty": "Easy", "Reason": "v2, редкая выборка Easy" },
+    { "Folder": "108c6 (OniiChan High Tech - Vilawes & altrewin)", "Characteristic": "Standard", "Difficulty": "ExpertPlus", "Reason": "v2, плотный ритм" },
+    { "Folder": "2ea67 (Bad Intentions [v3 Fitbeat] - Scarladore)", "Characteristic": "Standard", "Difficulty": "ExpertPlus", "Reason": "v3, fitbeat, эталон WallAlert" },
+    { "Folder": "2949d (Uragirimono no Requiem (TV Size) (2022 Remaster) - Joetastic)", "Characteristic": "Standard", "Difficulty": "ExpertPlus", "Reason": "v3, дуги" },
+    { "Folder": "31dc9 (My heart i surrender - Batthew & August)", "Characteristic": "Standard", "Difficulty": "ExpertPlus", "Reason": "v3, много дуг, dot notes" },
+    { "Folder": "40090 (RABBITHOLE - Jonas_0_0)", "Characteristic": "Standard", "Difficulty": "ExpertPlus", "Reason": "v3, пять BPM-событий" },
+    { "Folder": "42570 (Humanly - zeon)", "Characteristic": "Standard", "Difficulty": "ExpertPlus", "Reason": "v3, BPM, дуги и цепочки" },
+    { "Folder": "4f601 ([FITBEAT] Ride - Dark_Waffle)", "Characteristic": "Standard", "Difficulty": "ExpertPlus", "Reason": "v4, AudioData, REF-001, fitbeat" },
+    { "Folder": "5257f (bars with baldi - )", "Characteristic": "Standard", "Difficulty": "ExpertPlus", "Reason": "v4.1, отдельный набор дуг" }
+  ]
+}

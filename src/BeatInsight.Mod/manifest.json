@@ -1,0 +1,9 @@
+{
+  "id": "BeatInsight",
+  "name": "BeatInsight",
+  "author": "arevu",
+  "version": "0.1.0",
+  "description": "Map statistics, first notes and song density with play history markers.",
+  "gameVersion": "1.40.8",
+  "dependsOn": { "BSIPA": "^4.3.0", "BeatSaberMarkupLanguage": "^1.12.5" }
+}
