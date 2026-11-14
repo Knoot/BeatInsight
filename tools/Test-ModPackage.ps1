@@ -83,7 +83,7 @@ try {
             $patches.Add(@{type=$targetTypeName;method=$targetName})
         }
     }
-    if($patches.Count -ne 14){throw 'Expected four gameplay, one seek, five menu/settings and four squat callback/song lifecycle patches.'}
+    if($patches.Count -ne 15){throw 'Expected five gameplay/fingerprint, one seek, five menu/settings and four squat callback/song lifecycle patches.'}
     $presenter=$plugin.Types|Where-Object FullName -eq 'BeatInsight.Mod.SquatWarningPresenter'
     $visited=[Collections.Generic.HashSet[string]]::new()
     function Test-WarningSignalMethod($method){

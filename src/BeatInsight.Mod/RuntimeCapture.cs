@@ -18,6 +18,7 @@ internal static class RuntimeCapture
     }
     static Session? current;
     static Func<Session>? createSession;
+    static AttemptFingerprint? fingerprint;
     static bool restartPending;
     static bool enabled;
     static string historyPath="";
@@ -51,7 +52,7 @@ internal static class RuntimeCapture
     {
         if(!enabled)return;
         // Never reuse an attempt or a manager's failure handler across scene setups.
-        DetachAll();current=null;createSession=null;restartPending=false;
+        DetachAll();current=null;createSession=null;fingerprint=null;restartPending=false;
         if(!Plugin.Config.RecordDeaths)Plugin.Log.Debug("Death recording disabled by settings.");
         var key=setup.beatmapKey;
         if(string.IsNullOrEmpty(key.levelId)||key.beatmapCharacteristic==null)return;
@@ -70,14 +71,32 @@ internal static class RuntimeCapture
                 ["leftHanded"]=playerSettings.leftHanded.ToString(),["autoRestart"]=playerSettings.autoRestart.ToString()
             }};
         string mapKey=PlayHistory.Key(key.levelId,(int)key.difficulty,key.beatmapCharacteristic.serializedName);
+        fingerprint=new AttemptFingerprint(mapKey);
         bool practice=setup.practiceSettings!=null;
         createSession=()=> {
-            var attempt=new DeathAttempt(mapKey,modifiers,practice);
+            var attempt=new DeathAttempt(mapKey,modifiers,practice,fingerprint?.Hash);
             if(!Plugin.Config.RecordDeaths)attempt.SuppressRecording();
             return new Session {Setup=setup,Attempt=attempt};
         };
         current=createSession();
         Plugin.Log.Debug("Death capture started: "+mapKey+"; practice="+practice);
+    }
+
+    internal static void PrepareFingerprint(GameplayCoreSceneSetupData data)
+    {
+        if(!enabled||fingerprint==null||createSession==null||!Plugin.Config.RecordDeaths||data.practiceSettings!=null||subscriptions.Count>0)return;
+        var key=data.beatmapKey;
+        if(key.beatmapCharacteristic==null)return;
+        string mapKey=PlayHistory.Key(key.levelId,(int)key.difficulty,key.beatmapCharacteristic.serializedName);
+        if(mapKey!=fingerprint.MapKey)return;
+        var loaded=data.beatmapLevelData;
+        try
+        {
+            if(loaded==null){fingerprint.Invalidate();Plugin.Log.Warn("Loaded beatmap data unavailable; death fingerprint is unknown.");return;}
+            fingerprint.Prepare(mapKey,loaded,()=>loaded.GetBeatmapString(in key)??throw new InvalidDataException("Loaded beatmap JSON is unavailable"));
+            Plugin.Log.Debug("Death fingerprint prepared: "+mapKey);
+        }
+        finally{current?.Attempt.PrepareBeatmapHash(fingerprint.Hash);}
     }
 
     internal static void Attach(StandardLevelGameplayManager manager,AudioTimeSyncController clock)
@@ -87,6 +106,7 @@ internal static class RuntimeCapture
         // without calling InitAndSetupScenes again. Rearm at the new manager's Start.
         if(current==null&&restartPending&&createSession!=null){current=createSession();restartPending=false;}
         if(current==null)return;
+        current.Attempt.FreezeBeatmapHash();
         if(!Plugin.Config.RecordDeaths)SuppressRecording();
         var session=current;
         Action failure=()=> {
@@ -136,7 +156,7 @@ internal static class RuntimeCapture
         finishedResults.Add(results,new object());
         var session=current;current=null;DetachAll();
         restartPending=results.levelEndAction==LevelCompletionResults.LevelEndAction.Restart;
-        if(!restartPending)createSession=null;
+        if(!restartPending){createSession=null;fingerprint=null;}
         var outcome=results.levelEndStateType==LevelCompletionResults.LevelEndStateType.Failed?AttemptOutcome.Failed:
             results.levelEndStateType==LevelCompletionResults.LevelEndStateType.Cleared?AttemptOutcome.Cleared:AttemptOutcome.Incomplete;
         var record=session.Attempt.Complete(outcome,results.endSongTime,DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -153,7 +173,7 @@ internal static class RuntimeCapture
 
     internal static void Disable()
     {
-        enabled=false;current=null;createSession=null;restartPending=false;DetachAll();
+        enabled=false;current=null;createSession=null;fingerprint=null;restartPending=false;DetachAll();
         finishedResults=new ConditionalWeakTable<LevelCompletionResults,object>();
         Task writes;lock(writerLock)writes=pendingWrite;
         if(!writes.Wait(TimeSpan.FromSeconds(5)))Plugin.Log.Warn("History write is still pending at shutdown.");

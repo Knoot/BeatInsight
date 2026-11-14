@@ -29,7 +29,7 @@ try
     var ownHistory=args.Length>=6?DeathHistoryStore.Read(args[5]):new DeathHistoryReadResult {Status="not-requested"};
     int difficultyRank=test.Difficulty switch {"Easy"=>0,"Normal"=>1,"Hard"=>2,"Expert"=>3,"ExpertPlus"=>4,_=>throw new ArgumentException("Unknown difficulty")};
     string? historyKey=args.Length>=5&&!string.IsNullOrWhiteSpace(args[4])?PlayHistory.Key(args[4],difficultyRank,test.Characteristic):null;
-    string mapHash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(map.Json)));
+    string mapHash=BeatmapFingerprint.Compute(map.Json);
     var legacyMarkers=DeathHistory.LegacyMarkers(selected,map.Input);
     var ownMarkers=historyKey==null?Array.Empty<DeathMarker>():DeathHistory.OwnMarkers(ownHistory.Records,historyKey,map.Input.Duration,mapHash);
     Console.WriteLine(JsonConvert.SerializeObject(new {

@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using BeatInsight.Core;
@@ -90,8 +88,7 @@ public static class SelectedMapAnalyzer
         string hash="";
         if(Has(AnalysisFeatures.OwnDeaths))
         {
-            using var sha=SHA256.Create();
-            hash=BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(map.Json))).Replace("-","");
+            hash=BeatmapFingerprint.Compute(map.Json);
         }
         var markers=(Has(AnalysisFeatures.ImportedDeaths)&&records.Count>0?DeathHistory.LegacyMarkers(records,map.Input):Array.Empty<DeathMarker>())
             .Concat(Has(AnalysisFeatures.OwnDeaths)?DeathHistory.OwnMarkers(own.Records,key,map.Input.Duration,hash):Array.Empty<DeathMarker>()).ToArray();

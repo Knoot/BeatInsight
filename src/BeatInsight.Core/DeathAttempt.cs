@@ -12,7 +12,8 @@ public sealed class DeathAttempt
     readonly string mapKey;
     readonly HistoryModifiers modifiers;
     readonly bool practice;
-    readonly string? beatmapHash;
+    string? beatmapHash;
+    bool hashFrozen;
     double? failureTime;
     long failureDate;
     bool completed;
@@ -20,6 +21,12 @@ public sealed class DeathAttempt
     bool recordingSuppressed;
     public void SuppressRecording(){if(!completed){recordingSuppressed=true;failureTime=null;}}
     public string? ExclusionReason {get;private set;}
+    public void FreezeBeatmapHash()=>hashFrozen=true;
+    public bool PrepareBeatmapHash(string? hash)
+    {
+        if(hashFrozen||completed||failureTime.HasValue)return false;
+        beatmapHash=hash;return true;
+    }
     public bool ExcludeAfterSeek()
     {
         if(completed||sought)return false;
@@ -41,6 +48,7 @@ public sealed class DeathAttempt
     public bool CaptureFailure(double songTimeSeconds,long unixMilliseconds)
     {
         if(practice||sought||recordingSuppressed||completed||failureTime.HasValue||!ValidTime(songTimeSeconds))return false;
+        hashFrozen=true;
         failureTime=songTimeSeconds;failureDate=unixMilliseconds;return true;
     }
 

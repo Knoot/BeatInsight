@@ -185,4 +185,50 @@ warnings.Reset();
 Check(!warnings.Observe(1,2,1,1,3,2,1),"Elevated wall does not warn");
 Check(!warnings.Observe(1,2,1,1,1,0,3),"Zero width wall does not warn");
 Check(!warnings.Observe(1,2,1,1,1,2,0),"Zero height wall does not warn");
+const string fingerprintKey="fingerprint___3___Standard";
+var fingerprint=new AttemptFingerprint(fingerprintKey);
+var sourceA=new object();var sourceB=new object();int reads=0;
+string loadedJson="{\"version\":\"3.3.0\",\"label\":\"карта\"}";
+string ReadSnapshot(){reads++;return loadedJson;}
+Check(!fingerprint.Prepare("another-map",sourceA,ReadSnapshot)&&reads==0&&fingerprint.Hash==null,
+    "A different difficulty or level cannot supply this attempt's fingerprint");
+Check(fingerprint.Prepare(fingerprintKey,sourceA,ReadSnapshot)&&reads==1&&fingerprint.Hash?.Length==64,
+    "Loaded source produces a SHA256 fingerprint before gameplay");
+string hashA=fingerprint.Hash!;
+Check(hashA==Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(loadedJson))),
+    "Gameplay fingerprint preserves the existing menu/CLI UTF8 hashing protocol");
+loadedJson="{\"version\":\"3.3.0\",\"label\":\"updated map\"}";
+Check(fingerprint.Prepare(fingerprintKey,sourceA,ReadSnapshot)&&reads==1&&fingerprint.Hash==hashA,
+    "Restart with the same loaded source keeps its snapshot and performs no file read");
+var fingerprintAttempt=new DeathAttempt(fingerprintKey,captureModifiers,false);
+Check(fingerprintAttempt.PrepareBeatmapHash(fingerprint.Hash),"Fingerprint is assigned to the existing attempt during loading");
+fingerprintAttempt.FreezeBeatmapHash();
+Check(!fingerprintAttempt.PrepareBeatmapHash("changed-during-song"),"Gameplay cannot change a sealed fingerprint before a failure");
+fingerprintAttempt.CaptureFailure(15,1000);
+var fingerprintRecord=fingerprintAttempt.Complete(AttemptOutcome.Failed,16,2000)!;
+Check(fingerprintRecord.BeatmapSha256==hashA&&reads==1,"Failure saves the prepared fingerprint without reading or hashing the map");
+Check(fingerprint.Prepare(fingerprintKey,sourceB,ReadSnapshot)&&reads==2&&fingerprint.Hash!=hashA,
+    "A newly loaded source of the same map gets a new fingerprint");
+Check(DeathHistory.OwnMarkers([fingerprintRecord],fingerprintKey,100,fingerprint.Hash).Single().PositionStatus=="beatmap-changed",
+    "A death recorded before the update is recognized as stale afterwards");
+Check(fingerprintRecord.BeatmapSha256==hashA,"A later load cannot mutate the earlier death record");
+bool hashReadFailed=false;
+try{fingerprint.Prepare(fingerprintKey,new object(),()=>throw new IOException("synthetic read failure"));}
+catch(IOException){hashReadFailed=true;}
+Check(hashReadFailed&&fingerprint.Hash==null,"Failed fingerprint reads never reuse another source's hash");
+Check(fingerprint.Prepare(fingerprintKey,sourceB,ReadSnapshot)&&reads==3,"A failed source can be retried during a later load");
+fingerprint.Invalidate();
+Check(fingerprint.Hash==null&&new AttemptFingerprint(fingerprintKey).Hash==null,"Level teardown and new attempt series release fingerprint state");
+var stoppedAttempt=new DeathAttempt(fingerprintKey,captureModifiers,false);
+stoppedAttempt.SuppressRecording();stoppedAttempt.PrepareBeatmapHash(hashA);
+Check(!stoppedAttempt.CaptureFailure(15,1000)&&stoppedAttempt.Complete(AttemptOutcome.Failed,16,2000)==null,
+    "Preparing a hash cannot re-enable an attempt excluded by the recording setting");
+var freezeOnFailure=new DeathAttempt(fingerprintKey,captureModifiers,false,hashA);
+freezeOnFailure.CaptureFailure(15,1000);
+Check(!freezeOnFailure.PrepareBeatmapHash("late-hash"),"Observed failure also seals the hash without relying on the game adapter");
+string fingerprintFile=Path.Combine(scratch,"fingerprint-history",DeathHistoryStore.FileName);
+DeathHistoryStore.Append(fingerprintFile,fingerprintRecord);
+Check(DeathHistoryStore.Read(fingerprintFile).Records.Single().BeatmapSha256==hashA,"Prepared fingerprint survives own-history storage");
+Check(Newtonsoft.Json.JsonConvert.DeserializeObject<DeathRecord>("{\"MapKey\":\"old\",\"SongTimeSeconds\":1}")!.BeatmapSha256==null,
+    "An older record without a hash remains unknown rather than inheriting the current map version");
 Console.WriteLine($"Passed {checks} checks.");

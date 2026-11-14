@@ -3,6 +3,17 @@ using HarmonyLib;
 
 namespace BeatInsight.Mod;
 
+[HarmonyPatch(typeof(GameplayCoreInstaller),"InstallBindings")]
+internal static class AttemptFingerprintPatch
+{
+    [HarmonyPrefix]
+    static void Prefix(GameplayCoreSceneSetupData ____sceneSetupData)
+    {
+        try {RuntimeCapture.PrepareFingerprint(____sceneSetupData);}
+        catch(Exception e){Plugin.Log.Warn("Could not prepare death fingerprint; map version remains unknown: "+e.Message);}
+    }
+}
+
 [HarmonyPatch(typeof(StandardLevelScenesTransitionSetupDataSO),"InitAndSetupScenes")]
 internal static class AttemptStartPatch
 {
