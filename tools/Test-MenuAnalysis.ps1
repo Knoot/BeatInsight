@@ -18,6 +18,7 @@ foreach($project in @('BeatInsight.Checks','BeatInsight.MenuChecks','BeatInsight
     & dotnet run --project (Join-Path $workspace "tests/$project") --artifacts-path (Join-Path $OutputDirectory '.checks') "-p:RestoreSources=$cache" -p:NuGetAudit=false @extra | Tee-Object -FilePath (Join-Path $OutputDirectory "$project.txt")
     if($LASTEXITCODE){throw "Checks failed: $project"}
 }
+& (Join-Path $PSScriptRoot 'Test-MapSelection.ps1') -OutputDirectory (Join-Path $OutputDirectory 'map-selection')
 $artifacts=Join-Path $OutputDirectory '.oracle'
 & dotnet build (Join-Path $PSScriptRoot 'BeatInsight.Compare') --artifacts-path $artifacts --source $cache -p:NuGetAudit=false "-p:GameRoot=$GameRoot" --verbosity quiet
 if($LASTEXITCODE){throw 'Comparison build failed.'}

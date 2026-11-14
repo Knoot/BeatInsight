@@ -5,9 +5,34 @@ using Newtonsoft.Json;
 
 try
 {
-    if(args.Length<3)throw new ArgumentException("Usage: <map folder> <characteristic> <difficulty> [SongPlayData.json] [exact levelId] [BeatInsight.Deaths.json]");
+    const string usage="Usage: <map folder> <characteristic> <difficulty> [SongPlayData.json] [exact levelId] [BeatInsight.Deaths.json] [--file <relative beatmap path>]";
+    if(args.Length<3)throw new ArgumentException(usage);
+    string? exactFile=null;
+    var positional=args.Take(3).ToList();
+    for(int i=3;i<args.Length;i++)
+    {
+        string argument=args[i];
+        if(argument=="--file"||argument.StartsWith("--file=",StringComparison.Ordinal))
+        {
+            if(exactFile!=null)throw new ArgumentException("--file may only be specified once.");
+            if(argument=="--file")
+            {
+                if(++i>=args.Length||args[i].StartsWith("--",StringComparison.Ordinal))throw new ArgumentException("--file requires a relative beatmap path.");
+                exactFile=args[i];
+            }
+            else exactFile=argument.Substring("--file=".Length);
+            if(string.IsNullOrWhiteSpace(exactFile))throw new ArgumentException("--file requires a relative beatmap path.");
+        }
+        else if(argument.StartsWith("--",StringComparison.Ordinal))throw new ArgumentException("Unknown option: "+argument);
+        else positional.Add(argument);
+    }
+    args=positional.ToArray();
+    if(args.Length>6)throw new ArgumentException(usage);
     string folder=Path.GetFullPath(args[0]);
-    var test=LocalMap.Cases(folder).Single(t=>t.Characteristic==args[1]&&t.Difficulty==args[2]);
+    var mapSelection=MapSelector.Select(folder,args[1],args[2],exactFile);
+    var test=mapSelection.Case;
+    foreach(var diagnostic in mapSelection.Diagnostics)
+        Console.Error.WriteLine("Warning: duplicate map declaration: "+diagnostic.Characteristic+"/"+diagnostic.Difficulty+"/"+diagnostic.File+" ("+diagnostic.Occurrences+" declarations).");
     var map=LocalMap.Load(test);
     List<PlayRecord> selected=new();
     string historyStatus="not-requested";
@@ -33,7 +58,8 @@ try
     var legacyMarkers=DeathHistory.LegacyMarkers(selected,map.Input);
     var ownMarkers=historyKey==null?Array.Empty<DeathMarker>():DeathHistory.OwnMarkers(ownHistory.Records,historyKey,map.Input.Duration,mapHash);
     Console.WriteLine(JsonConvert.SerializeObject(new {
-        schemaVersion=3,profile="vanilla-neutral",test.Characteristic,test.Difficulty,map.Version,map.Features,
+        schemaVersion=3,profile="vanilla-neutral",test.Characteristic,test.Difficulty,test.File,map.Version,map.Features,
+        selectionDiagnostics=mapSelection.Diagnostics,
         implementation="independent; no reference implementation DLL is loaded by this CLI",
         compatible,corrected,
         median=new {left=WindowStatistics.ActiveWindowMedian(corrected.LeftBins),right=WindowStatistics.ActiveWindowMedian(corrected.RightBins),unit="swings/s",policy=WindowStatistics.ActiveHandMedianPolicy},

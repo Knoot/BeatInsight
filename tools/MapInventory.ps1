@@ -1,3 +1,17 @@
+function Get-BeatInsightDuplicateMapDeclarations([object[]]$Cases) {
+    $groups=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach($case in $Cases){
+        $folder=[IO.Path]::GetFullPath($case.Folder)
+        $file=[IO.Path]::GetFullPath((Join-Path $folder $case.File))
+        $key=ConvertTo-Json -InputObject @($folder.ToUpperInvariant(),$case.Characteristic,$case.Difficulty,$file.ToUpperInvariant()) -Compress
+        if($groups.ContainsKey($key)){$groups[$key].Occurrences++}else{$groups.Add($key,[pscustomobject]@{Case=$case;Occurrences=1})}
+    }
+    foreach($group in $groups.Values | Where-Object Occurrences -gt 1){
+        [pscustomobject][ordered]@{code='duplicate-map-declaration';folder=$group.case.Folder;characteristic=$group.case.Characteristic;
+            difficulty=$group.case.Difficulty;file=$group.case.File;occurrences=$group.Occurrences}
+    }
+}
+
 function Get-BeatInsightMapInfoFiles([string]$Root, [Collections.Generic.List[object]]$Skipped) {
     $pending=[Collections.Generic.Stack[string]]::new()
     $pending.Push($Root)

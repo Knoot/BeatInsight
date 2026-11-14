@@ -52,17 +52,30 @@ function Read-Cases([string]$folder) {
 $cases = [Collections.Generic.List[object]]::new()
 $inventoryErrors = [Collections.Generic.List[object]]::new()
 $inventorySkipped = [Collections.Generic.List[object]]::new()
+$inventoryWarnings = [Collections.Generic.List[object]]::new()
+$inventoriedFolders=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+function Read-InventoryCases([string]$folder){
+    $declared=@(Read-Cases $folder)
+    if($inventoriedFolders.Add([IO.Path]::GetFullPath($folder))){
+        foreach($warning in Get-BeatInsightDuplicateMapDeclarations $declared){
+            $inventoryWarnings.Add($warning)
+            Write-Warning ("Repeated Info declaration: {0}/{1}/{2}/{3} ({4} declarations)" -f (Split-Path $folder -Leaf),$warning.characteristic,$warning.difficulty,$warning.file,$warning.occurrences)
+        }
+    }
+    $declared
+}
 if ($Manifest) {
     $selection = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json
     foreach ($selected in $selection.maps) {
         $folder = Join-Path $MapsRoot $selected.Folder
-        $match = @(Read-Cases $folder | Where-Object { $_.Characteristic -ceq $selected.Characteristic -and $_.Difficulty -ceq $selected.Difficulty -and (!$selected.File -or $_.File -ceq $selected.File) })
-        if ($match.Count -ne 1) { throw "Manifest selection is not unique: $($selected.Folder)" }
+        $match = @(Read-InventoryCases $folder | Where-Object { $_.Characteristic -ceq $selected.Characteristic -and $_.Difficulty -ceq $selected.Difficulty -and (!$selected.File -or $_.File -ceq $selected.File) })
+        $distinctFiles=@($match | ForEach-Object {[IO.Path]::GetFullPath((Join-Path $_.Folder $_.File))} | Sort-Object -Unique)
+        if ($distinctFiles.Count -ne 1) { throw "Manifest selection is missing or ambiguous; specify File: $($selected.Folder)" }
         $cases.Add($match[0])
     }
 } else {
     foreach ($info in Get-BeatInsightMapInfoFiles $MapsRoot $inventorySkipped | Sort-Object FullName) {
-        try { foreach ($case in Read-Cases $info.DirectoryName) { $cases.Add($case) } }
+        try { foreach ($case in Read-InventoryCases $info.DirectoryName) { $cases.Add($case) } }
         catch { $inventoryErrors.Add(@{folder=$info.DirectoryName;error=$_.Exception.Message}) }
     }
 }
@@ -70,7 +83,7 @@ if (!$cases.Count) { throw 'No beatmaps discovered.' }
 $code = @(Get-ChildItem (Join-Path $workspace 'src'),(Join-Path $workspace 'tools') -Recurse -File | Where-Object { $_.Extension -in '.cs','.csproj','.ps1' -and $_.FullName -notmatch '[\\/](bin|obj)[\\/]' } | Sort-Object FullName | ForEach-Object { @{file=[IO.Path]::GetRelativePath($workspace,$_.FullName);sha256=(Get-FileHash -LiteralPath $_.FullName).Hash} })
 $referenceFiles=@('Analysis','Preview')|ForEach-Object {Get-BeatInsightReferenceAssembly $_ $GameRoot}
 $dependencies = @($referenceFiles)+@('BeatmapCore.dll','DataModels.dll','UnityEngine.CoreModule.dll'|ForEach-Object {Join-Path $GameRoot ('Beat Saber_Data/Managed/'+$_)}) | ForEach-Object { @{file=[IO.Path]::GetRelativePath($GameRoot,$_);sha256=(Get-FileHash -LiteralPath $_).Hash} }
-$run = [ordered]@{schemaVersion=3;profileVersion=2;startedUtc=[DateTime]::UtcNow.ToString('o');gameRoot=$GameRoot;mapsRoot=$MapsRoot;selection=$Manifest;expectedCases=$cases.Count;timeoutSeconds=$TimeoutSeconds;code=$code;dependencies=$dependencies;binarySha256=(Get-FileHash -LiteralPath $binary).Hash;inventoryErrors=$inventoryErrors.ToArray();inventorySkipped=$inventorySkipped.ToArray();inventoryPolicy='stop-at-level-root';coverage='vanilla-neutral; gameplay objects only; per-hand input order; synthetic history positions and last-100 selection; event capture not compared';cases=$cases.ToArray()}
+$run = [ordered]@{schemaVersion=3;profileVersion=2;startedUtc=[DateTime]::UtcNow.ToString('o');gameRoot=$GameRoot;mapsRoot=$MapsRoot;selection=$Manifest;expectedCases=$cases.Count;timeoutSeconds=$TimeoutSeconds;code=$code;dependencies=$dependencies;binarySha256=(Get-FileHash -LiteralPath $binary).Hash;inventoryErrors=$inventoryErrors.ToArray();inventorySkipped=$inventorySkipped.ToArray();inventoryWarnings=$inventoryWarnings.ToArray();inventoryPolicy='stop-at-level-root';coverage='vanilla-neutral; gameplay objects only; per-hand input order; synthetic history positions and last-100 selection; event capture not compared';cases=$cases.ToArray()}
 $run | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'run.json') -Encoding utf8NoBOM
 $counts = [ordered]@{pass=0;mismatch=0;unsupported=0;error=0;timeout=0;crash=0}
 $ledgerPath = Join-Path $OutputDirectory 'results.jsonl'
@@ -113,7 +126,7 @@ try {
         $record | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $resultPath -Encoding utf8NoBOM
         $counts[$record.status]++
         $ledger.WriteLine(($record | ConvertTo-Json -Depth 20 -Compress))
-        $summary=@{schemaVersion=3;profileVersion=2;complete=$false;processed=$index+1;expected=$cases.Count;counts=$counts;inventoryErrors=$inventoryErrors.Count;inventorySkipped=$inventorySkipped.Count;allCasesCompared=($counts.unsupported -eq 0 -and $counts.error -eq 0 -and $counts.timeout -eq 0 -and $counts.crash -eq 0 -and $inventoryErrors.Count -eq 0);updatedUtc=[DateTime]::UtcNow.ToString('o')}
+        $summary=@{schemaVersion=3;profileVersion=2;complete=$false;processed=$index+1;expected=$cases.Count;counts=$counts;inventoryErrors=$inventoryErrors.Count;inventorySkipped=$inventorySkipped.Count;inventoryWarnings=$inventoryWarnings.Count;allCasesCompared=($counts.unsupported -eq 0 -and $counts.error -eq 0 -and $counts.timeout -eq 0 -and $counts.crash -eq 0 -and $inventoryErrors.Count -eq 0);updatedUtc=[DateTime]::UtcNow.ToString('o')}
         $summary | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'summary.json') -Encoding utf8NoBOM
         Write-Host ('[{0}/{1}] {2}: {3} {4}/{5}' -f ($index+1),$cases.Count,$record.status,(Split-Path $cases[$index].Folder -Leaf),$cases[$index].Characteristic,$cases[$index].Difficulty)
     }
