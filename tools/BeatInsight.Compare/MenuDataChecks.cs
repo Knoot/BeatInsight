@@ -61,7 +61,7 @@ static class MenuDataChecks
         }
         var orientation=OrientationChecks.Run(gameRoot,out int orientationFailures);
         if(orientationFailures>0)failed++;
-        return new {schemaVersion=1,scope="menu data pipeline; map outputs compared with original IL; history tested separately on synthetic fixtures",
+        return new {schemaVersion=1,profileVersion=3,scope="menu data pipeline; map outputs compared with original IL; history tested separately on synthetic fixtures",
             cases=results.Count,selectiveCases,failed,gameStarted=false,userHistoryRead=false,results,orientation};
     }
 }

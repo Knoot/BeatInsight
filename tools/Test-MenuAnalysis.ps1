@@ -24,6 +24,8 @@ $artifacts=Join-Path $OutputDirectory '.oracle'
 if($LASTEXITCODE){throw 'Comparison build failed.'}
 & dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-menu-data $MapsRoot (Join-Path $workspace 'tests/checkpoint-maps.json') (Join-Path $OutputDirectory 'checkpoint.json')
 if($LASTEXITCODE){throw 'Menu data checkpoint comparison failed.'}
+& dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-rare-formats (Join-Path $OutputDirectory 'rare-formats.json')
+if($LASTEXITCODE){throw 'Rare-format comparison failed.'}
 & (Join-Path $PSScriptRoot 'Build-Mod.ps1') -GameRoot $GameRoot -OutputDirectory (Join-Path $OutputDirectory 'mod')
 Write-Host "Menu validation complete: $OutputDirectory"
 Write-Host 'No game process was started; no user history was read or written.'

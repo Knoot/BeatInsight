@@ -70,9 +70,11 @@ public static class LocalMap
         if (requirements.Length > 0) throw new NotSupportedException("Required extensions: " + string.Join(", ", requirements));
         if (root.Descendants().OfType<JProperty>().Any(p => p.Name == "_fake" || p.Name == "fake" || p.Name == "fakeColorNotes" || p.Name == "fakeBurstSliders")) throw new NotSupportedException("Custom fake objects require extension loader");
         string version = (string?)(root["version"] ?? root["_version"]) ?? "2.0.0";
-        int major = int.Parse(version.Split('.')[0]);
+        if(!Version.TryParse(version,out var parsedVersion)||parsedVersion.Major<2||parsedVersion.Major>4)
+            throw new NotSupportedException("Unsupported beatmap version: "+version);
+        int major=parsedVersion.Major;
         float bpm = F(info["_beatsPerMinute"] ?? info["audio"]?["bpm"]);
-        if (bpm <= 0) throw new InvalidDataException("Invalid initial BPM");
+        if (bpm <= 0||float.IsNaN(bpm)||float.IsInfinity(bpm)) throw new NotSupportedException("Non-positive or non-finite initial BPM; no valid vanilla timeline");
         bool needNotes=(features&(AnalysisFeatures.Average|AnalysisFeatures.Peak|AnalysisFeatures.Median|AnalysisFeatures.FirstNotes|AnalysisFeatures.Density|AnalysisFeatures.ImportedDeaths|AnalysisFeatures.Reference))!=0;
         bool needDuration=(features&(AnalysisFeatures.Density|AnalysisFeatures.ImportedDeaths|AnalysisFeatures.OwnDeaths|AnalysisFeatures.Reference))!=0;
         bool orientation=(features&(AnalysisFeatures.FirstNotes|AnalysisFeatures.Reference))!=0;
@@ -93,19 +95,29 @@ public static class LocalMap
         }
         else
         {
-            bool legacyBpm=major==2&&new Version(version)<new Version("2.5.0");
+            bool legacyBpm=major==2&&parsedVersion<new Version("2.5.0");
             var events = major == 2 ? Items(root["_events"]).Where(e => I(e["_type"]) == 100 || legacyBpm&&I(e["_type"])==10) : Items(root["bpmEvents"]);
             foreach (var e in events.OrderBy(e => F(e[major == 2 ? "_time" : "b"])))
             {
                 float beat = F(e[major == 2 ? "_time" : "b"]), next = legacyBpm&&I(e["_value"])!=0 ? I(e["_value"]) : F(e[major == 2 ? "_floatValue" : "m"]);
-                if (next <= 0 || float.IsNaN(next) || float.IsInfinity(next)) throw new NotSupportedException("Non-positive or non-finite BPM after game-format preprocessing; no valid vanilla timeline (legacy lighting may require an extension loader)");
                 var last = changes.Last(); changes.Add((beat, last.Time + (beat-last.Beat)/last.Bpm*60f, next));
             }
         }
         float Time(float beat)
         {
-            var c = changes.First(); foreach (var candidate in changes.Skip(1)) { if (candidate.Beat >= beat) break; c = candidate; }
-            return c.Time + (beat-c.Beat)/c.Bpm*60f;
+            var c = changes.First();
+            if(c.Bpm<=0||float.IsNaN(c.Bpm)||float.IsInfinity(c.Bpm))
+                throw new NotSupportedException("Non-positive or non-finite BPM affects a gameplay object; no valid vanilla timeline");
+            foreach (var candidate in changes.Skip(1))
+            {
+                if (candidate.Beat >= beat) break;
+                if(candidate.Bpm<=0||float.IsNaN(candidate.Bpm)||float.IsInfinity(candidate.Bpm))
+                    throw new NotSupportedException("Non-positive or non-finite BPM affects a gameplay object; no valid vanilla timeline");
+                c=candidate;
+            }
+            float time=c.Time+(beat-c.Beat)/c.Bpm*60f;
+            if(float.IsNaN(time)||float.IsInfinity(time))throw new NotSupportedException("Non-finite time for a gameplay object");
+            return time;
         }
         var notes = new List<MapNote>();
         var rawNotes=Items(root[major == 2 ? "_notes" : "colorNotes"]).ToList();
@@ -123,8 +135,19 @@ public static class LocalMap
                 CutDirectionAngleOffset=orientation?(customRotation?(float?)null:F(data["a"])):null });
         }
         var arcs=new List<PreparedSlider>();var chains=new List<PreparedSlider>();
-        foreach (var arc in Items(root[major == 4 ? "arcs" : "sliders"]))
+        string arcKey=major==2?"_sliders":major==4?"arcs":"sliders";
+        var rawArcs=Items(root[arcKey]).ToList();
+        if(major==2&&rawArcs.Zip(rawArcs.Skip(1),(a,b)=>F(a["_headTime"])>F(b["_headTime"])).Any(x=>x))
+            rawArcs.Sort((a,b)=>F(a["_headTime"]).CompareTo(F(b["_headTime"])));
+        foreach (var arc in rawArcs)
         {
+            if(major==2)
+            {
+                float head=F(arc["_headTime"]);
+                arcs.Add(new PreparedSlider {Head=new MapNote {Beat=head,Time=Time(head),X=I(arc["_headLineIndex"]),Y=I(arc["_headLineLayer"]),Color=I(arc["_colorType"])},
+                    TailTime=Time(F(arc["_tailTime"])),TailX=I(arc["_tailLineIndex"]),TailY=I(arc["_tailLineLayer"])});
+                continue;
+            }
             var hd = major == 4 ? root["colorNotesData"]![I(arc["hi"])]! : arc;
             var td = major == 4 ? root["colorNotesData"]![I(arc["ti"])]! : arc;
             float beat=F(arc[major==4?"hb":"b"]);
@@ -156,7 +179,7 @@ public static class LocalMap
         }
         var mapFeatures = new List<string> { "v"+major };
         if (changes.Count > 1) mapFeatures.Add("bpm-changes");
-        if (Items(root[major==4?"arcs":"sliders"]).Any()) mapFeatures.Add("arcs");
+        if (rawArcs.Count>0) mapFeatures.Add("arcs");
         if (Items(root[major==4?"chains":"burstSliders"]).Any()) mapFeatures.Add("chains");
         if (notes.Any(n => n.Direction==8)) mapFeatures.Add("dots");
         float duration = needDuration?ReadDuration(info,test.Folder):0;

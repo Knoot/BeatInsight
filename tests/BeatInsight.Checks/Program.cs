@@ -84,14 +84,14 @@ refused=false;try{DeathHistoryStore.Append(file,death);}catch(InvalidDataExcepti
 Check(refused,"Never overwrite future schema");
 File.WriteAllText(file,"{\"schemaVersion\":1,\"deaths\":[{}]}");
 Check(DeathHistoryStore.Read(file).Status=="invalid-data","Missing song time is not invented as zero");
-LoadedMap LoadSynthetic(JObject data,JObject? audioData=null)
+LoadedMap LoadSynthetic(JObject data,JObject? audioData=null,AnalysisFeatures features=AnalysisFeatures.All,float initialBpm=120)
 {
     var folder=Path.Combine(scratch,Guid.NewGuid().ToString("N"));Directory.CreateDirectory(folder);
-    var info=new JObject { ["version"]="4.0.1",["audio"]=new JObject {["bpm"]=120,["songDuration"]=100,["audioDataFilename"]="AudioData.dat"},
+    var info=new JObject { ["version"]="4.0.1",["audio"]=new JObject {["bpm"]=initialBpm,["songDuration"]=100,["audioDataFilename"]="AudioData.dat"},
         ["difficultyBeatmaps"]=new JArray(new JObject {["characteristic"]="Standard",["difficulty"]="Expert",["beatmapDataFilename"]="map.dat"})};
     File.WriteAllText(Path.Combine(folder,"Info.dat"),info.ToString());File.WriteAllText(Path.Combine(folder,"map.dat"),data.ToString());
     if(audioData!=null)File.WriteAllText(Path.Combine(folder,"AudioData.dat"),audioData.ToString());
-    return LocalMap.Load(LocalMap.Cases(folder).Single());
+    return LocalMap.Load(LocalMap.Cases(folder).Single(),features);
 }
 var legacyBpm=LoadSynthetic(JObject.Parse("""{"_version":"2.0.0","_notes":[{"_time":1,"_type":0,"_cutDirection":1}],"_events":[{"_time":0,"_type":10,"_value":2,"_floatValue":1}]}"""));
 Equal(legacyBpm.Input.Notes[0].Time,30);
@@ -105,7 +105,7 @@ var timing=LoadSynthetic(JObject.Parse("""{"version":"4.1.0","colorNotes":[{"b":
 float firstSegmentBpm=1f/(88095f/44100f)*60f;
 Equal(timing.Input.Notes[0].Time,1f/firstSegmentBpm*60f);
 bool invalidTimeline=false;
-try {LoadSynthetic(JObject.Parse("""{"_version":"2.0.0","_events":[{"_time":1,"_type":10,"_value":0,"_floatValue":0}]}"""));}
+try {LoadSynthetic(JObject.Parse("""{"_version":"2.0.0","_notes":[{"_time":2,"_type":0,"_cutDirection":1}],"_events":[{"_time":1,"_type":10,"_value":0,"_floatValue":0}]}"""));}
 catch(NotSupportedException){invalidTimeline=true;}
 Check(invalidTimeline,"Reject legacy zero-BPM timeline explicitly instead of overflowing reference arrays");
 var zeroWall=LoadSynthetic(JObject.Parse("""{"version":"3.3.0","colorNotes":[{"b":2,"x":0,"y":0,"c":0,"d":1}],"obstacles":[{"b":180,"d":0,"x":1,"y":0,"w":1,"h":5}]}"""));
@@ -271,4 +271,30 @@ foreach(var flags in new[]{(false,false),(true,false),(false,true),(true,true)})
         (flags.Item1==flags.Item2||(flags.Item1?importedRegion.Right==1:ownRegion.Left==0)),
         "Source hover zones remain accessible without markers and never overlap: "+flags);
 }
+var oldArcs=JObject.Parse("""{"_version":"2.6.0","_notes":[{"_time":2,"_lineIndex":0,"_type":0,"_cutDirection":1},{"_time":4,"_lineIndex":1,"_type":0,"_cutDirection":1},{"_time":6,"_lineIndex":2,"_type":0,"_cutDirection":1}],"_sliders":[{"_headTime":2,"_tailTime":4,"_headLineIndex":0,"_tailLineIndex":1,"_colorType":0},{"_headTime":4,"_tailTime":6,"_headLineIndex":1,"_tailLineIndex":2,"_colorType":0}]}""");
+var preparedOldArcs=LoadSynthetic(oldArcs);
+Check(preparedOldArcs.Features.Contains("arcs")&&preparedOldArcs.Input.Notes.Single(n=>n.Beat==4).ScoringType==6,
+    "Old v2 sliders are loaded and joined heads/tails retain their combined scoring type");
+var reversedOldArcs=(JObject)oldArcs.DeepClone();reversedOldArcs["_sliders"]=new JArray(((JArray)reversedOldArcs["_sliders"]!).Reverse());
+Check(LoadSynthetic(reversedOldArcs).Input.Notes.Select(n=>(n.Time,n.ScoringType)).SequenceEqual(preparedOldArcs.Input.Notes.Select(n=>(n.Time,n.ScoringType))),
+    "Unsorted v2 sliders are ordered before annotation as in the game loader");
+foreach(var feature in new[]{AnalysisFeatures.Average,AnalysisFeatures.Median,AnalysisFeatures.FirstNotes,AnalysisFeatures.Density,AnalysisFeatures.ImportedDeaths})
+    Check(LoadSynthetic(oldArcs,features:feature).Input.Notes.Select(n=>(n.Time,n.ScoringType)).SequenceEqual(preparedOldArcs.Input.Notes.Select(n=>(n.Time,n.ScoringType))),
+        "Selective loading preserves v2 arc preparation: "+feature);
+foreach(string version in new[]{"1.0.0","5.0.0","invalid"})
+{
+    bool rejected=false;
+    try{LoadSynthetic(JObject.Parse("{\"_version\":\""+version+"\"}"),features:AnalysisFeatures.Squats);}catch(NotSupportedException){rejected=true;}
+    Check(rejected,"Unsupported versions are explicit even when note analysis is hidden: "+version);
+}
+foreach(float initialBpm in new[]{0f,-1f,float.NaN,float.PositiveInfinity})
+{
+    bool rejected=false;
+    try{LoadSynthetic(JObject.Parse("{\"_version\":\"2.6.0\"}"),initialBpm:initialBpm);}catch(NotSupportedException){rejected=true;}
+    Check(rejected,"Invalid initial BPM is explicitly unsupported: "+initialBpm);
+}
+var unusedBadBpm=LoadSynthetic(JObject.Parse("""{"_version":"2.0.0","_notes":[],"_events":[{"_time":1,"_type":10,"_value":0,"_floatValue":0}]}"""));
+Check(unusedBadBpm.Input.Notes.Length==0,"Invalid lighting-only BPM does not reject a map without gameplay objects");
+var lateBadBpm=LoadSynthetic(JObject.Parse("""{"_version":"2.6.0","_notes":[{"_time":2,"_type":0,"_cutDirection":1}],"_events":[{"_time":20,"_type":100,"_value":0,"_floatValue":0}]}"""));
+Check(lateBadBpm.Input.Notes.Single().Time==1,"Unused BPM after the final object does not change valid note times");
 Console.WriteLine($"Passed {checks} checks.");
