@@ -12,6 +12,8 @@ public static class SelectedMapPresentation
         var r=result.Corrected;
         bool Has(AnalysisFeatures feature)=>(result.Features&feature)!=0;
         return new MenuRenderData {Average=Has(AnalysisFeatures.Average)?Pair(r.LeftAverage,r.RightAverage,"0.0"):"—",Peak=Has(AnalysisFeatures.Peak)?Pair(r.LeftPeak,r.RightPeak):"—",
+            ImportedHistory=Has(AnalysisFeatures.ImportedDeaths)?HistoryOverview.Create("legacy",result.LegacyHistoryStatus,result.DeathMarkers):null,
+            OwnHistory=Has(AnalysisFeatures.OwnDeaths)?HistoryOverview.Create("beatinsight",result.OwnHistoryStatus,result.DeathMarkers):null,
             Median=Has(AnalysisFeatures.Median)?Pair(result.MedianLeft,result.MedianRight):"—",Squats=result.SquatCount?.ToString(CultureInfo.InvariantCulture)??"—",
             Left=FirstNoteVisual.From(result.FirstLeftNote,left),Right=FirstNoteVisual.From(result.FirstRightNote,right),
             Duration=result.Duration,Colors=r.Colors,Markers=result.DeathMarkers};

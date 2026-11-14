@@ -52,6 +52,7 @@ public sealed class DeathMarker
     public string PositionStatus { get; set; } = "";
     public string? TimingSource { get; set; }
     public HistoryModifiers Modifiers { get; set; } = new HistoryModifiers();
+    public string MapVersionStatus {get;set;}="unknown";
 }
 
 public static class DeathHistory
@@ -78,17 +79,19 @@ public static class DeathHistory
                 double? time=valid?(double?)times[r.LastNote]:null;
                 return new DeathMarker {Source="legacy",Date=r.Date,LastNote=r.LastNote,SongTimeSeconds=time,
                     NormalizedPosition=valid&&input.Duration>0?time/input.Duration:null,
-                    PositionStatus=valid?"legacy-note-index-estimate":"invalid-index",Modifiers=HistoryModifiers.FromLegacy(r.Param)};
+                    PositionStatus=valid?"legacy-note-index-estimate":"invalid-index",MapVersionStatus="not-recorded",Modifiers=HistoryModifiers.FromLegacy(r.Param)};
             }).ToArray();
     }
 
     public static DeathMarker[] OwnMarkers(IEnumerable<DeathRecord> records, string mapKey, double duration, string? beatmapSha256=null)
         => records.Where(r=>!r.IsPractice&&r.MapKey==mapKey).OrderByDescending(r=>r.Date).Select(r=> {
-            bool stale=beatmapSha256!=null&&r.BeatmapSha256!=null&&!string.Equals(beatmapSha256,r.BeatmapSha256,StringComparison.OrdinalIgnoreCase);
+            bool storedHash=!string.IsNullOrWhiteSpace(r.BeatmapSha256),currentHash=!string.IsNullOrWhiteSpace(beatmapSha256);
+            bool stale=currentHash&&storedHash&&!string.Equals(beatmapSha256,r.BeatmapSha256,StringComparison.OrdinalIgnoreCase);
             bool valid=!stale&&!double.IsNaN(r.SongTimeSeconds)&&!double.IsInfinity(r.SongTimeSeconds)&&r.SongTimeSeconds>=0&&duration>0&&r.SongTimeSeconds<=duration;
             return new DeathMarker {Source="beatinsight",Date=r.Date,SongTimeSeconds=valid?(double?)r.SongTimeSeconds:null,
                 NormalizedPosition=valid?(double?)(r.SongTimeSeconds/duration):null,
                 PositionStatus=stale?"beatmap-changed":valid?(r.TimingSource=="completion-song-time-fallback"?"completion-song-time-estimate":"recorded-song-time"):"invalid-song-time",
+                MapVersionStatus=!storedHash?"not-recorded":!currentHash?"not-checked":stale?"changed":"verified",
                 TimingSource=r.TimingSource,Modifiers=r.Modifiers??new HistoryModifiers()};
         }).ToArray();
 }

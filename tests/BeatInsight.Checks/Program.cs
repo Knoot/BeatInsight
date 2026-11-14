@@ -231,4 +231,44 @@ DeathHistoryStore.Append(fingerprintFile,fingerprintRecord);
 Check(DeathHistoryStore.Read(fingerprintFile).Records.Single().BeatmapSha256==hashA,"Prepared fingerprint survives own-history storage");
 Check(Newtonsoft.Json.JsonConvert.DeserializeObject<DeathRecord>("{\"MapKey\":\"old\",\"SongTimeSeconds\":1}")!.BeatmapSha256==null,
     "An older record without a hash remains unknown rather than inheriting the current map version");
+foreach(var status in new[]{"source-missing","source-unreadable","invalid-data","unsupported-schema","not-requested","unknown"})
+{
+    var unavailable=HistoryOverview.Create("beatinsight",status,[]);
+    Check(!unavailable.Tooltip.Contains("0 shown")&&!unavailable.Tooltip.Contains("No records"),"Unavailable history never masquerades as zero deaths: "+status);
+}
+Check(HistoryOverview.Create("legacy","key-absent",[]).Tooltip.Contains("No records for this difficulty"),"Missing difficulty has a specific empty-state message");
+Check(HistoryOverview.Create("beatinsight","available",[]).Tooltip.Contains("No records for this difficulty"),"Readable empty history differs from unavailable history");
+var overviewRecords=DeathHistory.OwnMarkers([
+    new(){MapKey=fingerprintKey,SongTimeSeconds=10,BeatmapSha256=hashA,TimingSource="failure-song-time"},
+    new(){MapKey=fingerprintKey,SongTimeSeconds=20,TimingSource="completion-song-time-fallback"},
+    new(){MapKey=fingerprintKey,SongTimeSeconds=30},
+    new(){MapKey=fingerprintKey,SongTimeSeconds=40,BeatmapSha256="another-version"},
+    new(){MapKey=fingerprintKey,SongTimeSeconds=200}],fingerprintKey,100,hashA);
+var overview=HistoryOverview.Create("beatinsight","available",overviewRecords);
+Check(overview.Records==5&&overview.Shown==3&&overview.Changed==1&&overview.Invalid==1&&overview.Unverified==2,
+    "Overview distinguishes visible, changed, invalid and version-unverified positions");
+Check(overview.Tooltip.Contains("Recorded failure time: 1")&&overview.Tooltip.Contains("Completion-time estimates: 1")&&
+    overview.Tooltip.Contains("Timing accuracy unspecified: 1")&&overview.Tooltip.Contains("Map version verified: 1"),
+    "Recorded failure time, completion estimate, unspecified timing and verified version remain distinct");
+Check(overview.Tooltip.Contains("Current modifiers do not filter")&&overview.Tooltip.Contains("Speed presets: Unknown"),
+    "Unknown modifiers remain unknown and history is not presented as filtered by current settings");
+var legacyOverview=HistoryOverview.Create("legacy","available",legacy);
+Check(legacyOverview.Shown==2&&legacyOverview.Invalid==1&&legacyOverview.Tooltip.Contains("note indices")&&legacyOverview.Tooltip.Contains("unverified"),
+    "Imported positions retain their index estimate and unverified map version");
+var emptyHashMarker=DeathHistory.OwnMarkers([new(){MapKey=fingerprintKey,SongTimeSeconds=1,BeatmapSha256=" "}],fingerprintKey,100,hashA).Single();
+Check(emptyHashMarker.MapVersionStatus=="not-recorded"&&HistoryOverview.CanDraw(emptyHashMarker),"Empty stored hash is unknown, not evidence of a changed map");
+var notChecked=DeathHistory.OwnMarkers([new(){MapKey=fingerprintKey,SongTimeSeconds=1,BeatmapSha256=hashA}],fingerprintKey,100).Single();
+Check(notChecked.MapVersionStatus=="not-checked","A stored hash without a current hash is not marked verified");
+Check(!HistoryOverview.CanDraw(new DeathMarker {SongTimeSeconds=double.NaN,NormalizedPosition=.5})&&
+    !HistoryOverview.CanDraw(new DeathMarker {SongTimeSeconds=1,NormalizedPosition=double.PositiveInfinity}),"Nonfinite positions cannot be counted or drawn");
+foreach(var flags in new[]{(false,false),(true,false),(false,true),(true,true)})
+{
+    var importedRegion=HistoryHoverLayout.Region(flags.Item1,flags.Item2,false);
+    var ownRegion=HistoryHoverLayout.Region(flags.Item1,flags.Item2,true);
+    Check(importedRegion.Enabled==flags.Item1&&ownRegion.Enabled==flags.Item2&&
+        (!flags.Item1||importedRegion.Left==0)&&(!flags.Item2||ownRegion.Right==1)&&
+        (!flags.Item1||!flags.Item2||importedRegion.Right==ownRegion.Left)&&
+        (flags.Item1==flags.Item2||(flags.Item1?importedRegion.Right==1:ownRegion.Left==0)),
+        "Source hover zones remain accessible without markers and never overlap: "+flags);
+}
 Console.WriteLine($"Passed {checks} checks.");

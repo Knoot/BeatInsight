@@ -265,22 +265,19 @@ public sealed class MenuUI:MonoBehaviour
         var drawing=MenuDrawing.CompactGraph(data,height);visibility.Apply(drawing);graph.Show(drawing,height);
         if(hints.Count<9)return;
         // Time labels cannot fit in this existing gap. Keep the density hit
-        // region across the band and separate source hints over their markers.
+        // region across the band. Separate source zones above the band stay
+        // accessible even if the source is empty, unreadable or entirely stale.
         var density=(RectTransform)hints[6].transform;
         density.gameObject.SetActive(visibility.Density);
         density.anchorMin=Vector2.zero;density.anchorMax=Vector2.one;density.offsetMin=density.offsetMax=Vector2.zero;
         for(int source=0;source<2;source++)
         {
-            string name=source==0?"legacy":"beatinsight";
-            var positions=data.Markers.Where(m=>m.Source==name&&m.SongTimeSeconds.HasValue&&
-                m.NormalizedPosition.HasValue&&m.NormalizedPosition.Value>=0&&m.NormalizedPosition.Value<=1)
-                .Select(m=>(float)m.NormalizedPosition!.Value).ToArray();
-            var hint=hints[7+source];hint.gameObject.SetActive(positions.Length>0&&(source==0?visibility.ImportedDeaths:visibility.OwnDeaths));
-            if(positions.Length==0)continue;
+            var region=HistoryHoverLayout.Region(visibility.ImportedDeaths,visibility.OwnDeaths,source==1);
+            var hint=hints[7+source];hint.gameObject.SetActive(region.Enabled);
+            if(!region.Enabled)continue;
             var rect=(RectTransform)hint.transform;
-            float padding=MenuDrawing.CompactMarkerHalfExtent/MenuDrawing.Width;
-            rect.anchorMin=new Vector2(Mathf.Clamp(positions.Min(),padding,1-padding)-padding,1);
-            rect.anchorMax=new Vector2(Mathf.Clamp(positions.Max(),padding,1-padding)+padding,1);
+            rect.anchorMin=new Vector2(region.Left,1);
+            rect.anchorMax=new Vector2(region.Right,1);
             rect.pivot=new Vector2(.5f,.5f);rect.anchoredPosition=new Vector2(0,-MenuDrawing.CompactMarkerCenter(height)*scale);
             rect.sizeDelta=new Vector2(0,2*MenuDrawing.CompactMarkerHalfExtent*scale);
         }
@@ -357,10 +354,8 @@ public sealed class MenuUI:MonoBehaviour
             int seconds=Mathf.Max(0,(int)result.Duration);
             hints[6].text+="\nSong time: 0:00 – "+(seconds/60)+":"+(seconds%60).ToString("00",CultureInfo.InvariantCulture);
             if(result.SquatError!=null)hints[5].text+="\nSquat count unavailable.";
-            string History(string status,string source)=>status=="available"?"Records: "+result.DeathMarkers.Count(m=>m.Source==source):status switch {
-                "key-absent"=>"No records for this difficulty.","source-missing"=>"History file not found.","unsupported-schema"=>"Unsupported history format.",_=>"History unavailable."};
-            hints[7].text+="\n"+History(result.LegacyHistoryStatus,"legacy");
-            hints[8].text+="\n"+History(result.OwnHistoryStatus,"beatinsight");
+            if(data.ImportedHistory!=null)hints[7].text=data.ImportedHistory.Tooltip;
+            if(data.OwnHistory!=null)hints[8].text=data.OwnHistory.Tooltip;
             Plugin.Log.Debug("History markers: imported="+result.DeathMarkers.Count(m=>m.Source=="legacy"&&m.NormalizedPosition.HasValue)+
                 "; own="+result.DeathMarkers.Count(m=>m.Source=="beatinsight"&&m.NormalizedPosition.HasValue)+"; ownStatus="+result.OwnHistoryStatus);
         }

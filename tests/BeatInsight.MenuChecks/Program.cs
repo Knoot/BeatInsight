@@ -256,8 +256,23 @@ var graphFixture=new MenuRenderData {Duration=120,Colors=Enumerable.Range(0,90).
     new(){Source="legacy",NormalizedPosition=null,SongTimeSeconds=null}]};
 var graphDrawing=MenuDrawing.Graph(graphFixture);
 var markersWithoutDensity=MenuDrawing.CompactGraph(new MenuRenderData {Duration=graphFixture.Duration,Markers=graphFixture.Markers},1);
-Check(markersWithoutDensity.Triangles.Count==8&&markersWithoutDensity.Labels.Count==0,
-    "History markers render without calculating hidden density or showing a spurious error dash");
+Check(markersWithoutDensity.Triangles.Count(t=>t.Group==DrawGroup.ImportedDeaths||t.Group==DrawGroup.OwnDeaths)==8&&
+    markersWithoutDensity.Triangles.Count(t=>t.Group==DrawGroup.HistoryGuide)==2&&markersWithoutDensity.Labels.Count==0,
+    "History markers retain a neutral guide without calculating hidden density or showing an error dash");
+var noDeaths=MenuDrawing.CompactGraph(new MenuRenderData {Duration=100},1);
+new MenuVisibility {Density=false}.Apply(noDeaths);
+Check(noDeaths.Triangles.Count==2&&noDeaths.Triangles.All(t=>t.Group==DrawGroup.HistoryGuide),
+    "Empty history still provides a visible guide and hover target when density is disabled");
+new MenuVisibility {Density=false,ImportedDeaths=false,OwnDeaths=false}.Apply(noDeaths);
+Check(noDeaths.Triangles.Count==0,"Disabling both history sources removes their neutral guide");
+var unavailableHistoryGuide=MenuDrawing.CompactGraph(new MenuRenderData(),1);
+new MenuVisibility {Density=false,ImportedDeaths=false}.Apply(unavailableHistoryGuide);
+Check(unavailableHistoryGuide.Triangles.Count==2&&unavailableHistoryGuide.Labels.Count==0,
+    "Unavailable map data retains a history hover guide even with density disabled");
+Check(readyPresentation.ImportedHistory?.Tooltip.Contains("note indices")==true&&readyPresentation.OwnHistory?.Tooltip.Contains("Completion-time estimates")==true,
+    "Presentation carries source-specific availability and precision summaries");
+var hiddenHistory=SelectedMapPresentation.Create(new SelectedMapAnalysis {Features=AnalysisFeatures.Average},leftColor,rightColor);
+Check(hiddenHistory.ImportedHistory==null&&hiddenHistory.OwnHistory==null,"Hidden sources do not build history summaries");
 var ownOnly=MenuDrawing.CompactGraph(graphFixture,1);
 new MenuVisibility {Density=false,ImportedDeaths=false}.Apply(ownOnly);
 Check(ownOnly.Triangles.Count==4&&ownOnly.Triangles.All(t=>t.Group==DrawGroup.OwnDeaths&&t.Color.R==1&&t.Color.G==0),

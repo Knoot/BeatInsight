@@ -63,6 +63,7 @@ public sealed class FirstNoteVisual
 }
 public sealed class MenuRenderData
 {
+    public HistoryOverview? ImportedHistory,OwnHistory;
     public string Average="—",Peak="—",Median="—",Squats="—";
     public FirstNoteVisual? Left,Right;
     public float Duration;
@@ -156,19 +157,28 @@ public static class MenuDrawing
     public static Drawing Graph(MenuRenderData data)
     {
         var d=new Drawing {Group=DrawGroup.Density};
-        if(data.Duration<=0){Label(d,"—",48,5,5,3);return d;}
+        if(data.Duration<=0||float.IsNaN(data.Duration)||float.IsInfinity(data.Duration))
+        {
+            d.Group=DrawGroup.HistoryGuide;Rect(d,0,4.2f,Width,2.2f,new DrawColor(.3f,.3f,.3f,.6f));
+            d.Group=DrawGroup.Density;Label(d,"—",48,5,5,3);return d;
+        }
         float step=data.Colors.Length>0?Width/data.Colors.Length:0;
         for(int i=0;i<data.Colors.Length;i++)
         {
             var c=data.Colors[i];if(c.Length<4)continue;
             Rect(d,i*step,4.2f,step+.02f,2.2f,new DrawColor(c[0],c[1],c[2],c[3]));
         }
+        if(data.Colors.Length==0)
+        {
+            d.Group=DrawGroup.HistoryGuide;
+            Rect(d,0,4.2f,Width,2.2f,new DrawColor(.3f,.3f,.3f,.6f));
+        }
         var drawn=new HashSet<(string Source,int Position)>();
         // Both sources share the band edge; own records draw last, on top.
         foreach(var m in data.Markers.OrderBy(m=>m.Source=="beatinsight"?1:0))
         {
-            if(!m.NormalizedPosition.HasValue||!m.SongTimeSeconds.HasValue)continue;
-            double position=m.NormalizedPosition.Value;if(double.IsNaN(position)||position<0||position>1)continue;
+            if(!HistoryOverview.CanDraw(m))continue;
+            double position=m.NormalizedPosition.GetValueOrDefault();
             // Coincident crosses on the same source track share geometry only;
             // full records and modifiers stay intact in the view data.
             if(!drawn.Add((m.Source,(int)Math.Round(position*1000))))continue;
@@ -191,7 +201,7 @@ public static class MenuDrawing
     public static Drawing CompactGraph(MenuRenderData data,float height)
     {
         var drawing=Graph(data);
-        int bandTriangles=data.Duration>0?2*data.Colors.Count(c=>c.Length>=4):0;
+        int bandTriangles=drawing.Triangles.Count(t=>t.Group==DrawGroup.Density||t.Group==DrawGroup.HistoryGuide);
         float edge=height*.1f;
         float center=0;
         for(int i=0;i<drawing.Triangles.Count;i++)
@@ -210,7 +220,8 @@ public static class MenuDrawing
             var t=drawing.Triangles[i];t.A=Move(t.A);t.B=Move(t.B);t.C=Move(t.C);
         }
         drawing.Labels.Clear();
-        if(bandTriangles==0&&drawing.Triangles.Count==0)Label(drawing,"—",48,height/2,5,Math.Min(3,height));
+        if(data.Duration<=0||float.IsNaN(data.Duration)||float.IsInfinity(data.Duration)||bandTriangles==0&&drawing.Triangles.Count==0)
+            Label(drawing,"—",48,height/2,5,Math.Min(3,height));
         return drawing;
     }
 }

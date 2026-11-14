@@ -1,6 +1,6 @@
 namespace BeatInsight.Core;
 
-public enum DrawGroup { None, Average, Peak, Median, Squats, FirstNotes, Density, ImportedDeaths, OwnDeaths }
+public enum DrawGroup { None, Average, Peak, Median, Squats, FirstNotes, Density, ImportedDeaths, OwnDeaths, HistoryGuide }
 
 public sealed class MenuVisibility
 {
@@ -13,7 +13,8 @@ public sealed class MenuVisibility
         (ImportedDeaths?AnalysisFeatures.ImportedDeaths:0)|(OwnDeaths?AnalysisFeatures.OwnDeaths:0);
     public bool Includes(DrawGroup group)=>group switch {
         DrawGroup.Average=>Average,DrawGroup.Peak=>Peak,DrawGroup.Median=>Median,DrawGroup.Squats=>Squats,
-        DrawGroup.FirstNotes=>FirstNotes,DrawGroup.Density=>Density,DrawGroup.ImportedDeaths=>ImportedDeaths,DrawGroup.OwnDeaths=>OwnDeaths,_=>true};
+        DrawGroup.FirstNotes=>FirstNotes,DrawGroup.Density=>Density,DrawGroup.ImportedDeaths=>ImportedDeaths,DrawGroup.OwnDeaths=>OwnDeaths,
+        DrawGroup.HistoryGuide=>ImportedDeaths||OwnDeaths,_=>true};
     public void Apply(Drawing drawing)
     {
         drawing.Triangles.RemoveAll(t=>!Includes(t.Group));
