@@ -83,7 +83,24 @@ try {
             $patches.Add(@{type=$targetTypeName;method=$targetName})
         }
     }
-    if($patches.Count -ne 13){throw 'Expected four gameplay, one seek, five menu/settings and three squat callback lifecycle patches.'}
+    if($patches.Count -ne 14){throw 'Expected four gameplay, one seek, five menu/settings and four squat callback/song lifecycle patches.'}
+    $presenter=$plugin.Types|Where-Object FullName -eq 'BeatInsight.Mod.SquatWarningPresenter'
+    $visited=[Collections.Generic.HashSet[string]]::new()
+    function Test-WarningSignalMethod($method){
+        if(!$visited.Add($method.FullName)){return}
+        foreach($instruction in $method.Body.Instructions){
+            if($instruction.OpCode.Name -eq 'newobj' -or $instruction.OpCode.Name -eq 'newarr'){throw 'Warning signal path must not allocate objects or arrays.'}
+            if($instruction.Operand -is [Mono.Cecil.MethodReference]){
+                $call=$instruction.Operand
+                if($call.Name -in @('CreatePrimitive','AddComponent','Instantiate','Find','ForceMeshUpdate','Prepare','CreateText','CreateCircles')){throw "Resource creation reached from warning signal: $($call.FullName)"}
+                if($call.DeclaringType.FullName -eq $presenter.FullName){
+                    $next=$presenter.Methods|Where-Object FullName -eq $call.FullName
+                    if($next.HasBody){Test-WarningSignalMethod $next}
+                }
+            }
+        }
+    }
+    Test-WarningSignalMethod ($presenter.Methods|Where-Object Name -eq 'Show')
     $models=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $GameRoot 'Beat Saber_Data/Managed/DataModels.dll'));$modules.Add($models)
     $hmui=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $GameRoot 'Beat Saber_Data/Managed/HMUI.dll'));$modules.Add($hmui)
     foreach($item in @(

@@ -11,23 +11,29 @@ internal sealed class SquatWarningPresenter:MonoBehaviour
     float hideAt;
     bool showing;
 
-    internal static void Show(bool circles)
+    internal static void Prepare(bool circles)
     {
         if(instance==null)instance=new GameObject("BeatInsight squat warning").AddComponent<SquatWarningPresenter>();
-        instance.ShowAlert(circles);
+        try
+        {
+            if(circles){if(instance.left==null||instance.right==null)instance.CreateCircles();}
+            else if(instance.textObject==null)instance.CreateText();
+            instance.HideAlert();
+        }
+        catch{Dispose();throw;}
     }
+    internal static bool Ready(bool circles)=>instance!=null&&(circles?instance.left!=null&&instance.right!=null:instance.textObject!=null);
+    internal static void Show(bool circles){if(Ready(circles))instance!.ShowAlert(circles);}
     void ShowAlert(bool circles)
     {
         HideAlert();
         if(circles)
         {
-            if(left==null||right==null)CreateCircles();
             if(left==null||right==null)return;
             left.SetActive(true);right.SetActive(true);
         }
         else
         {
-            if(textObject==null)CreateText();
             if(textObject==null)return;
             textObject.SetActive(true);
         }
@@ -43,6 +49,8 @@ internal sealed class SquatWarningPresenter:MonoBehaviour
         var text=textObject.AddComponent<TextMeshPro>();
         text.alignment=TextAlignmentOptions.Center;text.color=new Color(1,.15f,.05f,1);
         text.fontSize=18;text.fontStyle=FontStyles.Bold;text.text="DUCK";
+        // Build the glyph mesh before the first signal, even while hidden.
+        textObject.SetActive(false);text.ForceMeshUpdate(true,true);
     }
     void CreateCircles()
     {

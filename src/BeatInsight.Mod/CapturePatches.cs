@@ -20,6 +20,8 @@ internal static class GameplayStartPatch
     [HarmonyPostfix]
     static void Postfix(StandardLevelGameplayManager __instance,AudioTimeSyncController ____audioTimeSyncController)
     {
+        try {SquatWarnings.Prepare();}
+        catch(Exception e){Plugin.Log.Error("Could not prepare squat warning resources: "+e);}
         try {RuntimeCapture.Attach(__instance,____audioTimeSyncController);}
         catch(Exception e){Plugin.Log.Error("Could not attach BeatInsight failure capture: "+e);}
     }

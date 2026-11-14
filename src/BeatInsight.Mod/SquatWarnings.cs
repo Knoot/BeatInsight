@@ -15,7 +15,18 @@ internal static class SquatWarnings
     }
     static readonly Dictionary<BeatmapCallbacksController,Subscription> subscriptions=new();
     static bool enabled;
-    internal static void Enable()=>enabled=true;
+    static bool configuredEnabled,configuredCircles;
+    static float configuredLead;
+    internal static void Enable()
+    {enabled=true;configuredEnabled=Plugin.Config.SquatWarningsEnabled;configuredCircles=Plugin.Config.SquatWarningCircles;configuredLead=LeadTime;}
+    internal static void Prepare(bool reportUnavailable=false)
+    {
+        if(!enabled||subscriptions.Count==0||!Plugin.Config.SquatWarningsEnabled)return;
+        bool circles=Plugin.Config.SquatWarningCircles;
+        SquatWarningPresenter.Prepare(circles);
+        if(reportUnavailable&&!SquatWarningPresenter.Ready(circles))
+            Plugin.Log.Warn("Squat warning resources unavailable before song start; signals will be skipped.");
+    }
     internal static void Attach(BeatmapCallbacksController controller)
     {
         if(!enabled||subscriptions.ContainsKey(controller))return;
@@ -46,18 +57,24 @@ internal static class SquatWarnings
         if(time<state.PreviousTime){state.Sequence.Reset();SquatWarningPresenter.Hide();}
         state.PreviousTime=time;
     }
-    internal static void Detach(BeatmapCallbacksController controller)
+    internal static void Detach(BeatmapCallbacksController controller,bool releasePresenter=true)
     {
         if(!subscriptions.TryGetValue(controller,out var state))return;
         controller.RemoveBeatmapCallback(state.Callback);subscriptions.Remove(controller);
-        if(subscriptions.Count==0)SquatWarningPresenter.Dispose();
+        if(releasePresenter&&subscriptions.Count==0)SquatWarningPresenter.Dispose();
     }
     internal static void SettingsChanged()
     {
-        // Ahead time belongs to the callback registration, so replace it when changed.
-        var controllers=new List<BeatmapCallbacksController>(subscriptions.Keys);
-        foreach(var controller in controllers){Detach(controller);Attach(controller);}
-        SquatWarningPresenter.Hide();
+        bool active=Plugin.Config.SquatWarningsEnabled,circles=Plugin.Config.SquatWarningCircles;
+        float lead=LeadTime;
+        if(active==configuredEnabled&&circles==configuredCircles&&lead==configuredLead)return;
+        bool leadChanged=lead!=configuredLead;
+        configuredEnabled=active;configuredCircles=circles;configuredLead=lead;
+        // Visibility/recording changes must not recreate warning resources.
+        if(leadChanged)
+            foreach(var controller in new List<BeatmapCallbacksController>(subscriptions.Keys)){Detach(controller,false);Attach(controller);}
+        if(!active)SquatWarningPresenter.Dispose();
+        else Prepare();
     }
     internal static void Disable()
     {
@@ -65,6 +82,15 @@ internal static class SquatWarnings
         try{foreach(var controller in new List<BeatmapCallbacksController>(subscriptions.Keys))Detach(controller);}
         finally{subscriptions.Clear();SquatWarningPresenter.Dispose();}
     }
+}
+
+[HarmonyPatch(typeof(GameSongController),"StartSong")]
+internal static class SquatSongStartPatch
+{
+    // Camera setup can finish after gameplay-manager Start. Retry before audio
+    // starts, never from an obstacle callback or from the presenter's Show path.
+    [HarmonyPrefix] static void Prefix()
+    {try{SquatWarnings.Prepare(true);}catch(Exception e){Plugin.Log.Error("Could not prepare squat warnings before song start: "+e);}}
 }
 
 [HarmonyPatch(typeof(BeatmapCallbacksController),MethodType.Constructor,new[]{typeof(BeatmapCallbacksController.InitData)})]
