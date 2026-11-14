@@ -51,7 +51,7 @@ try {
             $patches.Add(@{type=$targetTypeName;method=$targetName})
         }
     }
-    if($patches.Count -ne 8){throw 'Expected four gameplay and four menu lifecycle patches.'}
+    if($patches.Count -ne 9){throw 'Expected four gameplay, one seek and four menu lifecycle patches.'}
     $models=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $GameRoot 'Beat Saber_Data/Managed/DataModels.dll'));$modules.Add($models)
     $hmui=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $GameRoot 'Beat Saber_Data/Managed/HMUI.dll'));$modules.Add($hmui)
     foreach($item in @(

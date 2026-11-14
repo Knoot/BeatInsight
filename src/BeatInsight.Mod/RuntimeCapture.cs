@@ -21,9 +21,10 @@ internal static class RuntimeCapture
     static bool restartPending;
     static bool enabled;
     static string historyPath="";
-    static readonly Dictionary<StandardLevelGameplayManager,Action> subscriptions=new Dictionary<StandardLevelGameplayManager,Action>();
+    static readonly Dictionary<StandardLevelGameplayManager,(Action Failure,AudioTimeSyncController Clock)> subscriptions=new();
     static readonly object writerLock=new object();
     static Task pendingWrite=Task.CompletedTask;
+    internal static event Action? HistoryWritten;
     static ConditionalWeakTable<LevelCompletionResults,object> finishedResults=new ConditionalWeakTable<LevelCompletionResults,object>();
 
     internal static void VerifyGameBuild()
@@ -71,6 +72,7 @@ internal static class RuntimeCapture
         bool practice=setup.practiceSettings!=null;
         createSession=()=>new Session {Setup=setup,Attempt=new DeathAttempt(mapKey,modifiers,practice)};
         current=createSession();
+        Plugin.Log.Debug("Death capture started: "+mapKey+"; practice="+practice);
     }
 
     internal static void Attach(StandardLevelGameplayManager manager,AudioTimeSyncController clock)
@@ -83,21 +85,40 @@ internal static class RuntimeCapture
         var session=current;
         Action failure=()=> {
             if(!ReferenceEquals(current,session))return;
-            try {session.Attempt.CaptureFailure(clock.songTime,DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());}
+            try
+            {
+                if(session.Attempt.CaptureFailure(clock.songTime,DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
+                    Plugin.Log.Info("Observed native failure at song time "+clock.songTime.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
             catch(Exception e){Plugin.Log.Error("Could not capture failure time: "+e);}
         };
-        manager.levelFailedEvent+=failure;subscriptions.Add(manager,failure);
+        manager.levelFailedEvent+=failure;subscriptions.Add(manager,(failure,clock));
+        Plugin.Log.Debug("Native failure observer attached.");
+    }
+
+    internal static void Seek(AudioTimeSyncController clock,float target)
+    {
+        if(!enabled||current==null)return;
+        // StartSong invokes SeekTo(0) at the initial song time. This is normal
+        // initialization; a later seek to zero still has a noninitial old time.
+        if(Math.Abs(clock.songTime-clock.startSongTime)<.001f&&Math.Abs(target)<.001f)return;
+        foreach(var entry in subscriptions.Values)
+            if(ReferenceEquals(entry.Clock,clock))
+            {
+                if(current.Attempt.ExcludeAfterSeek())Plugin.Log.Debug("Own history disabled for this attempt: song-seek.");
+                return;
+            }
     }
 
     internal static void Detach(StandardLevelGameplayManager manager)
     {
         if(!subscriptions.TryGetValue(manager,out var action))return;
-        manager.levelFailedEvent-=action;subscriptions.Remove(manager);
+        manager.levelFailedEvent-=action.Failure;subscriptions.Remove(manager);
     }
 
     static void DetachAll()
     {
-        foreach(var pair in subscriptions)pair.Key.levelFailedEvent-=pair.Value;
+        foreach(var pair in subscriptions)pair.Key.levelFailedEvent-=pair.Value.Failure;
         subscriptions.Clear();
     }
 
@@ -112,12 +133,14 @@ internal static class RuntimeCapture
         var outcome=results.levelEndStateType==LevelCompletionResults.LevelEndStateType.Failed?AttemptOutcome.Failed:
             results.levelEndStateType==LevelCompletionResults.LevelEndStateType.Cleared?AttemptOutcome.Cleared:AttemptOutcome.Incomplete;
         var record=session.Attempt.Complete(outcome,results.endSongTime,DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-        if(record==null)return;
+        if(record==null)
+        {Plugin.Log.Debug("Own death skipped: "+session.Attempt.ExclusionReason+"; outcome="+outcome);return;}
         string path=historyPath;
         // IO has no Unity dependency and is serialized off the game thread.
         lock(writerLock)pendingWrite=pendingWrite.ContinueWith(_=> {
             try {DeathHistoryStore.Append(path,record);Plugin.Log.Info("Recorded death ("+record.TimingSource+").");}
-            catch(Exception e){Plugin.Log.Error("Could not save BeatInsight death history: "+e);}
+            catch(Exception e){Plugin.Log.Error("Could not save BeatInsight death history: "+e);return;}
+            try {HistoryWritten?.Invoke();}catch(Exception e){Plugin.Log.Error("History refresh notification failed: "+e);}
         },TaskScheduler.Default);
     }
 

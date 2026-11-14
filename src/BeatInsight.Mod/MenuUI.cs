@@ -24,8 +24,8 @@ public sealed class MenuUI:MonoBehaviour
     ImageView? averageIcon,peakIcon,squatIcon;
     readonly Dictionary<RectTransform,(Vector2 Original,Vector2 Applied)> shifted=new();
     readonly List<RectTransform> layoutScratch=new(64);
-    static readonly string[] movedRows={"BeatmapCharacteristic","BeatmapDifficulty","ModifierSelection","ActionButtons","VnjsInfoStrip"};
-    static readonly string[] tailRows={"BeatmapDifficulty","ModifierSelection","ActionButtons","VnjsInfoStrip"};
+    static readonly string[] movedRows={"BeatmapCharacteristic","BeatmapDifficulty","ModifierSelection","ActionButtons"};
+    static readonly string[] tailRows={"BeatmapDifficulty","ModifierSelection","ActionButtons"};
     readonly List<HoverHint> hints=new();
     readonly Vector3[] corners=new Vector3[4];
     float lastWidth,lastRowHeight,lastGraphWidth,lastGraphHeight;
@@ -340,6 +340,8 @@ public sealed class MenuUI:MonoBehaviour
                 "key-absent"=>"No records for this difficulty.","source-missing"=>"History file not found.","unsupported-schema"=>"Unsupported history format.",_=>"History unavailable."};
             hints[7].text+="\n"+History(result.LegacyHistoryStatus,"legacy");
             hints[8].text+="\n"+History(result.OwnHistoryStatus,"beatinsight");
+            Plugin.Log.Debug("History markers: imported="+result.DeathMarkers.Count(m=>m.Source=="legacy"&&m.NormalizedPosition.HasValue)+
+                "; own="+result.DeathMarkers.Count(m=>m.Source=="beatinsight"&&m.NormalizedPosition.HasValue)+"; ownStatus="+result.OwnHistoryStatus);
         }
         Draw();
     }

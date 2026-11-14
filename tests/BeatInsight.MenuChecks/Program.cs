@@ -171,6 +171,9 @@ var graphFixture=new MenuRenderData {Duration=120,Colors=Enumerable.Range(0,90).
     new(){Source="legacy",NormalizedPosition=.5,SongTimeSeconds=60},new(){Source="beatinsight",NormalizedPosition=.5,SongTimeSeconds=60},
     new(){Source="legacy",NormalizedPosition=null,SongTimeSeconds=null}]};
 var graphDrawing=MenuDrawing.Graph(graphFixture);
+var reverseSources=new MenuRenderData {Duration=graphFixture.Duration,Colors=graphFixture.Colors,Markers=graphFixture.Markers.Reverse().ToArray()};
+Check(MenuDrawing.CompactGraph(reverseSources,1).Triangles.TakeLast(4).All(t=>t.Color.R==1&&t.Color.G==0&&t.Color.B==0),
+    "Own red crosses draw last even if imported markers arrive after own records");
 Check(graphDrawing.Triangles.Count==188&&graphDrawing.Labels.Count==5,"Graph draws 90 segments, two distinct source crosses and five time labels; invalid marker omitted");
 Check(graphDrawing.Triangles.Any(t=>t.Color.R==1&&t.Color.G==1&&t.Color.B==0)&&graphDrawing.Triangles.Any(t=>t.Color.R==1&&t.Color.G==0&&t.Color.B==0),"History crosses keep exact yellow and red colors");
 var compactGraph=MenuDrawing.CompactGraph(graphFixture,1);

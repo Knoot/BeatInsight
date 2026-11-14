@@ -40,6 +40,7 @@ public static class MenuAnalysis
     internal static void Enable()
     {
         if(requests!=null)return;
+        RuntimeCapture.HistoryWritten+=HistoryWritten;
         requests=new SelectionCoordinator<MenuSelection,SelectedMapAnalysis>(LoadAsync,
             action=>UnityMainThreadTaskScheduler.Factory.StartNew(action));
         requests.Changed+=state=> {
@@ -141,6 +142,14 @@ public static class MenuAnalysis
         catch(Exception e){Plugin.Log.Error("Selection request failed: "+e);}
     }
 
+    static void HistoryWritten()
+    {
+        Observe(UnityMainThreadTaskScheduler.Factory.StartNew(()=> {
+            if(active==null||requests==null)return;
+            submittedKey=null;Submit(active);
+        }));
+    }
+
     static void Notify(SelectionState<MenuSelection,SelectedMapAnalysis> state)
     {
         if(Changed==null)return;
@@ -153,6 +162,7 @@ public static class MenuAnalysis
 
     internal static void Disable()
     {
+        RuntimeCapture.HistoryWritten-=HistoryWritten;
         Unsubscribe();requests?.Dispose();requests=null;
         Notify(idle);Changed=null;
     }

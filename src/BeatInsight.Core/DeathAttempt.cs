@@ -16,6 +16,13 @@ public sealed class DeathAttempt
     double? failureTime;
     long failureDate;
     bool completed;
+    bool sought;
+    public string? ExclusionReason {get;private set;}
+    public bool ExcludeAfterSeek()
+    {
+        if(completed||sought)return false;
+        sought=true;failureTime=null;return true;
+    }
 
     public DeathAttempt(string mapKey, HistoryModifiers modifiers, bool practice, string? beatmapHash=null)
     {
@@ -31,7 +38,7 @@ public sealed class DeathAttempt
 
     public bool CaptureFailure(double songTimeSeconds,long unixMilliseconds)
     {
-        if(practice||completed||failureTime.HasValue||!ValidTime(songTimeSeconds))return false;
+        if(practice||sought||completed||failureTime.HasValue||!ValidTime(songTimeSeconds))return false;
         failureTime=songTimeSeconds;failureDate=unixMilliseconds;return true;
     }
 
@@ -41,12 +48,15 @@ public sealed class DeathAttempt
         completed=true;
         // A restart/quit after an observed failure can carry Incomplete. A plain
         // restart/quit has no failure event and must never create a death record.
-        if(practice||outcome==AttemptOutcome.Cleared||outcome!=AttemptOutcome.Failed&&!failureTime.HasValue)return null;
-        double time=failureTime??completionSongTimeSeconds;
-        if(!ValidTime(time))return null;
-        var record=DeathHistory.Create(mapKey,time,failureTime.HasValue?failureDate:unixMilliseconds,
+        if(practice){ExclusionReason="practice";return null;}
+        if(sought){ExclusionReason="song-seek";return null;}
+        if(outcome==AttemptOutcome.Cleared){ExclusionReason="cleared";return null;}
+        // Modified completion results are not evidence of a real failure.
+        if(!failureTime.HasValue){ExclusionReason="no-observed-failure";return null;}
+        double time=failureTime.Value;
+        var record=DeathHistory.Create(mapKey,time,failureDate,
             modifiers,false,true,beatmapHash)!;
-        record.TimingSource=failureTime.HasValue?"failure-song-time":"completion-song-time-fallback";
+        record.TimingSource="failure-song-time";
         return record;
     }
 }

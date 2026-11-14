@@ -46,3 +46,14 @@ internal static class AttemptFinishPatch
         catch(Exception e){Plugin.Log.Error("Could not finish BeatInsight attempt: "+e);}
     }
 }
+
+[HarmonyPatch(typeof(AudioTimeSyncController),"SeekTo")]
+internal static class SongSeekPatch
+{
+    [HarmonyPrefix]
+    static void Prefix(AudioTimeSyncController __instance,float __0)
+    {
+        try {RuntimeCapture.Seek(__instance,__0);}
+        catch(Exception e){Plugin.Log.Error("Could not track song seek: "+e);}
+    }
+}
