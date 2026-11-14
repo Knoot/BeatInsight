@@ -147,6 +147,10 @@ Check(invalidAttempt.Complete(AttemptOutcome.Failed,double.NaN,0)==null,"No fake
 var retry=new DeathAttempt("attempt___3___Standard",captureModifiers,false);
 Check(retry.CaptureFailure(2,5000)&&retry.Complete(AttemptOutcome.Failed,4,6000)!.Id!=captured.Id,"A new attempt on the same map has an independent identity");
 var noFailAttempt=new DeathAttempt("attempt___3___Standard",captureModifiers,false);
+var recordingOff=new DeathAttempt("attempt___3___Standard",captureModifiers,false);
+recordingOff.CaptureFailure(20,1000);recordingOff.SuppressRecording();
+Check(!recordingOff.CaptureFailure(21,1100)&&recordingOff.Complete(AttemptOutcome.Failed,30,2000)==null&&recordingOff.ExclusionReason=="recording-disabled",
+    "Disabling recording invalidates the current attempt without producing a record");
 Check(noFailAttempt.Complete(AttemptOutcome.Cleared,100,7000)==null,"NoFail completion without a failure event produces no death");
 var rewound=new DeathAttempt("attempt___3___Standard",captureModifiers,false);
 Check(rewound.ExcludeAfterSeek()&&!rewound.CaptureFailure(25,1000),"Seeking excludes subsequent failure events");
@@ -162,4 +166,23 @@ string attemptFile=Path.Combine(scratch,"attempt-capture",DeathHistoryStore.File
 DeathHistoryStore.Append(attemptFile,captured);
 Check(DeathHistoryStore.Read(attemptFile).Records.Single().TimingSource=="failure-song-time","Timing source survives own-history persistence");
 Check(Newtonsoft.Json.JsonConvert.DeserializeObject<DeathRecord>("{\"MapKey\":\"old\",\"SongTimeSeconds\":1}")!.TimingSource==null,"Old own records do not invent a precise timing source");
+var warnings=new BeatInsight.WallAlert.SquatWarningSequence();
+Check(!warnings.Observe(1,2,1,0,0,4,3),"Full-height wall alone does not start a squat warning");
+warnings.Reset();
+Check(!warnings.Observe(1,2,1,0,1,1,3),"Side-only upper wall does not warn");
+Check(!warnings.Observe(1,2,1,1,1,1,3),"Single center lane waits for combined coverage");
+Check(warnings.Observe(1,2,1,2,1,1,3),"Split upper walls covering both center lanes warn once");
+Check(!warnings.Observe(1,2,1,2,1,1,3),"Duplicate wall does not duplicate warning");
+Check(!warnings.Observe(1.5f,2.5f,1,1,1,2,3),"Half-beat boundary continues the same sequence");
+Check(!warnings.Observe(2,3,1,1,1,2,3),"Adjacent chain extends sequence suppression");
+Check(warnings.Observe(2.501f,3.501f,1,1,1,2,3),"Gap greater than half a beat starts a new warning");
+warnings.Reset();
+Check(warnings.Observe(1,2,1,1,1,2,3),"Restart or rewind resets sequence suppression");
+warnings.Reset();
+Check(!warnings.Observe(1,1.1f,.1f,1,1,1,3)
+    &&!warnings.Observe(1.3f,2,0.7f,2,1,1,3),"Expired lane coverage cannot complete a later squat");
+warnings.Reset();
+Check(!warnings.Observe(1,2,1,1,3,2,1),"Elevated wall does not warn");
+Check(!warnings.Observe(1,2,1,1,1,0,3),"Zero width wall does not warn");
+Check(!warnings.Observe(1,2,1,1,1,2,0),"Zero height wall does not warn");
 Console.WriteLine($"Passed {checks} checks.");

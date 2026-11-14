@@ -12,33 +12,34 @@ public static class CompatibleAnalysis
         0 => -180f, 1 => 0f, 2 => -90f, 3 => 90f, 4 => -135f,
         5 => 135f, 6 => -45f, 7 => 45f, _ => 0f
     };
-    public static AnalysisResult Analyze(MapInput input, bool reproduceKnownDefects = true, IEnumerable<PlayRecord>? history = null)
+    public static AnalysisResult Analyze(MapInput input, bool reproduceKnownDefects = true, IEnumerable<PlayRecord>? history = null,AnalysisFeatures features=AnalysisFeatures.All)
     {
+        bool bins=(features&(AnalysisFeatures.Average|AnalysisFeatures.Peak|AnalysisFeatures.Median))!=0;
         var notes = input.Notes.Where(n => !reproduceKnownDefects || n.ScoringType <= 3).ToArray();
         float end = notes.LastOrDefault()?.Time ?? 0;
-        foreach (var w in input.Walls)
+        if(bins)foreach (var w in input.Walls)
             if (w.X == 1 || w.X == 2 || w.Width >= 2) end = Math.Max(end, w.Time + w.Duration);
-        int size = notes.Length == 0 ? 0 : checked((int)Math.Floor(end) + 1);
+        int size = !bins||notes.Length == 0 ? 0 : checked((int)Math.Floor(end) + 1);
         if (size > 86400) throw new ArgumentOutOfRangeException(nameof(input), "Analysis exceeds 24 hours");
         var left = new int[size]; var right = new int[size];
         MapNote? prevLeft = null, prevRight = null;
-        foreach (var n in notes)
+        if(bins)foreach (var n in notes)
         {
             if (n.Time < 0 || n.Color < 0 || n.Color > 1) continue;
             if (n.Color == 0) Add(n, ref prevLeft, left); else Add(n, ref prevRight, right);
         }
-        int[] total = left.Zip(right, (a, b) => a + b).ToArray();
-        var values = SegmentValues(notes, input.Duration);
-        var indices=(history??Enumerable.Empty<PlayRecord>()).Where(r=>r.LastNote>0).OrderByDescending(r=>r.Date).Take(100).Select(r=>r.LastNote).ToArray();
-        var historyTimes=notes.SelectMany(n=>Enumerable.Repeat(n.Time,Math.Max(1,n.SliceCount))).ToArray();
+        int[] total = (features&(AnalysisFeatures.Average|AnalysisFeatures.Peak))!=0?left.Zip(right, (a, b) => a + b).ToArray():Array.Empty<int>();
+        var values = (features&AnalysisFeatures.Density)!=0?SegmentValues(notes, input.Duration):Array.Empty<float>();
+        var indices=(features&AnalysisFeatures.ImportedDeaths)!=0?(history??Enumerable.Empty<PlayRecord>()).Where(r=>r.LastNote>0).OrderByDescending(r=>r.Date).Take(100).Select(r=>r.LastNote).ToArray():Array.Empty<int>();
+        var historyTimes=indices.Length>0?notes.SelectMany(n=>Enumerable.Repeat(n.Time,Math.Max(1,n.SliceCount))).ToArray():Array.Empty<float>();
         var seconds=indices.Select(i=>i>=0&&i<historyTimes.Length?historyTimes[i]:0f).ToArray();
         return new AnalysisResult
         {
             LeftBins = left, RightBins = right,
-            LeftAverage = Average(left), RightAverage = Average(right), TotalAverage = Average(total),
-            LeftPeak = left.DefaultIfEmpty().Max(), RightPeak = right.DefaultIfEmpty().Max(), TotalPeak = total.DefaultIfEmpty().Max(),
-            FirstLeft = Angle(notes.FirstOrDefault(n => n.Color == 0)?.Direction ?? 8),
-            FirstRight = Angle(notes.FirstOrDefault(n => n.Color == 1)?.Direction ?? 8),
+            LeftAverage = (features&AnalysisFeatures.Average)!=0?Average(left):0, RightAverage = (features&AnalysisFeatures.Average)!=0?Average(right):0, TotalAverage = (features&AnalysisFeatures.Average)!=0?Average(total):0,
+            LeftPeak = (features&AnalysisFeatures.Peak)!=0?left.DefaultIfEmpty().Max():0, RightPeak = (features&AnalysisFeatures.Peak)!=0?right.DefaultIfEmpty().Max():0, TotalPeak = (features&AnalysisFeatures.Peak)!=0?total.DefaultIfEmpty().Max():0,
+            FirstLeft = (features&AnalysisFeatures.FirstNotes)!=0?Angle(notes.FirstOrDefault(n => n.Color == 0)?.Direction ?? 8):0,
+            FirstRight = (features&AnalysisFeatures.FirstNotes)!=0?Angle(notes.FirstOrDefault(n => n.Color == 1)?.Direction ?? 8):0,
             Segments = values, Colors = values.Select(Color).ToArray(),
             HistoryIndices=indices,HistorySeconds=seconds,HistoryNormalized=seconds.Select(t=>input.Duration>0?t/input.Duration:0).ToArray()
         };

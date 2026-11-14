@@ -23,16 +23,19 @@ public sealed class SelectedMapRequest
     public string? LegacyHistoryFile {get;}
     public string? OwnHistoryFile {get;}
     public string? UnavailableReason {get;}
+    public AnalysisFeatures Features {get;}
     public SelectedMapRequest(string levelId,string characteristic,string difficulty,int difficultyRank,string beatmapFile,
-        string? legacyHistoryFile=null,string? ownHistoryFile=null,string? unavailableReason=null)
+        string? legacyHistoryFile=null,string? ownHistoryFile=null,string? unavailableReason=null,AnalysisFeatures features=AnalysisFeatures.All)
     {
         LevelId=levelId;Characteristic=characteristic;Difficulty=difficulty;DifficultyRank=difficultyRank;BeatmapFile=beatmapFile;
         LegacyHistoryFile=legacyHistoryFile;OwnHistoryFile=ownHistoryFile;UnavailableReason=unavailableReason;
+        Features=features;
     }
 }
 
 public sealed class SelectedMapAnalysis
 {
+    public AnalysisFeatures Features {get;set;}=AnalysisFeatures.All;
     public string MapKey {get;set;}="";
     public string BeatmapSha256 {get;set;}="";
     public string MapVersion {get;set;}="";
@@ -68,27 +71,37 @@ public static class SelectedMapAnalyzer
             throw new ArgumentException("Exact levelId, characteristic and difficulty are required");
         string[] difficulties={"Easy","Normal","Hard","Expert","ExpertPlus"};
         if(difficulties[request.DifficultyRank]!=request.Difficulty)throw new ArgumentException("Difficulty name and rank disagree");
-        var selected=LocalMap.CaseFromFile(request.BeatmapFile,request.Characteristic,request.Difficulty);
-        var map=LocalMap.Load(selected);
-        token.ThrowIfCancellationRequested();
+        var features=request.Features;
+        bool Has(AnalysisFeatures feature)=>(features&feature)!=0;
         string key=PlayHistory.Key(request.LevelId,request.DifficultyRank,request.Characteristic);
-        var records=ReadLegacy(request.LegacyHistoryFile,key,out string legacyStatus);
-        var own=request.OwnHistoryFile==null?new DeathHistoryReadResult {Status="not-requested"}:DeathHistoryStore.Read(request.OwnHistoryFile);
+        if(features==AnalysisFeatures.None)return new SelectedMapAnalysis {MapKey=key,Features=features};
+        var selected=LocalMap.CaseFromFile(request.BeatmapFile,request.Characteristic,request.Difficulty);
+        var map=LocalMap.Load(selected,features);
         token.ThrowIfCancellationRequested();
-        var compatible=CompatibleAnalysis.Analyze(map.Input,history:records);
+        string legacyStatus="not-requested";
+        var records=Has(AnalysisFeatures.ImportedDeaths)?ReadLegacy(request.LegacyHistoryFile,key,out legacyStatus):new List<PlayRecord>();
+        var own=!Has(AnalysisFeatures.OwnDeaths)||request.OwnHistoryFile==null?new DeathHistoryReadResult {Status="not-requested"}:DeathHistoryStore.Read(request.OwnHistoryFile);
+        token.ThrowIfCancellationRequested();
+        var compatible=Has(AnalysisFeatures.Reference)?CompatibleAnalysis.Analyze(map.Input,history:records):new AnalysisResult();
         // Legacy positions must stay on the compatible sequence. The UI gets
         // explicit DeathMarkers, never legacy indices projected onto corrected notes.
-        var corrected=CompatibleAnalysis.Analyze(map.Input,reproduceKnownDefects:false);
-        using var sha=SHA256.Create();
-        string hash=BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(map.Json))).Replace("-","");
-        var markers=DeathHistory.LegacyMarkers(records,map.Input).Concat(DeathHistory.OwnMarkers(own.Records,key,map.Input.Duration,hash)).ToArray();
+        var corrected=(features&(AnalysisFeatures.Average|AnalysisFeatures.Peak|AnalysisFeatures.Median|AnalysisFeatures.FirstNotes|AnalysisFeatures.Density))!=0
+            ?CompatibleAnalysis.Analyze(map.Input,reproduceKnownDefects:false,features:features&~AnalysisFeatures.ImportedDeaths):new AnalysisResult();
+        string hash="";
+        if(Has(AnalysisFeatures.OwnDeaths))
+        {
+            using var sha=SHA256.Create();
+            hash=BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(map.Json))).Replace("-","");
+        }
+        var markers=(Has(AnalysisFeatures.ImportedDeaths)&&records.Count>0?DeathHistory.LegacyMarkers(records,map.Input):Array.Empty<DeathMarker>())
+            .Concat(Has(AnalysisFeatures.OwnDeaths)?DeathHistory.OwnMarkers(own.Records,key,map.Input.Duration,hash):Array.Empty<DeathMarker>()).ToArray();
         int? squats=null;string? squatError=null;
-        try {squats=WallAlertAdapter.Count(map.Json,map.Bpm);}catch(Exception e){squatError=e.Message;}
+        if(Has(AnalysisFeatures.Squats))try {squats=WallAlertAdapter.Count(map.Json,map.Bpm);}catch(Exception e){squatError=e.Message;}
         token.ThrowIfCancellationRequested();
-        return new SelectedMapAnalysis {MapKey=key,BeatmapSha256=hash,MapVersion=map.Version,Duration=map.Input.Duration,
-            Compatible=compatible,Corrected=corrected,MedianLeft=WindowStatistics.ActiveWindowMedian(corrected.LeftBins),
-            MedianRight=WindowStatistics.ActiveWindowMedian(corrected.RightBins),HasLeftNote=map.Input.Notes.Any(n=>n.Color==0),
-            HasRightNote=map.Input.Notes.Any(n=>n.Color==1),FirstLeftNote=map.Input.Notes.FirstOrDefault(n=>n.Color==0),FirstRightNote=map.Input.Notes.FirstOrDefault(n=>n.Color==1),
+        return new SelectedMapAnalysis {Features=features,MapKey=key,BeatmapSha256=hash,MapVersion=map.Version,Duration=map.Input.Duration,
+            Compatible=compatible,Corrected=corrected,MedianLeft=Has(AnalysisFeatures.Median)?WindowStatistics.ActiveWindowMedian(corrected.LeftBins):0,
+            MedianRight=Has(AnalysisFeatures.Median)?WindowStatistics.ActiveWindowMedian(corrected.RightBins):0,HasLeftNote=Has(AnalysisFeatures.FirstNotes)&&map.Input.Notes.Any(n=>n.Color==0),
+            HasRightNote=Has(AnalysisFeatures.FirstNotes)&&map.Input.Notes.Any(n=>n.Color==1),FirstLeftNote=Has(AnalysisFeatures.FirstNotes)?map.Input.Notes.FirstOrDefault(n=>n.Color==0):null,FirstRightNote=Has(AnalysisFeatures.FirstNotes)?map.Input.Notes.FirstOrDefault(n=>n.Color==1):null,
             SquatCount=squats,SquatError=squatError,LegacyHistoryStatus=legacyStatus,OwnHistoryStatus=own.Status,DeathMarkers=markers};
     }
 

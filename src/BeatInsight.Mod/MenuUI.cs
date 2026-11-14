@@ -33,6 +33,12 @@ public sealed class MenuUI:MonoBehaviour
     ColorSchemesSettings? colors;
     OverrideEnvironmentSettings? environments;
     MenuRenderData data=new MenuRenderData();
+    MenuVisibility visibility=new();
+    internal static void SettingsChanged()
+    {
+        if(current==null)return;
+        current.visibility=Plugin.Config.Visibility();current.Position();current.Render(MenuAnalysis.Current);
+    }
 
     internal static void Enable(){MenuAnalysis.Changed-=Changed;MenuAnalysis.Changed+=Changed;}
     internal static void Disable()
@@ -47,6 +53,7 @@ public sealed class MenuUI:MonoBehaviour
         try
         {
             var display=go.AddComponent<MenuUI>();current=display;display.controller=owner;
+            display.visibility=Plugin.Config.Visibility();
             display.view=(StandardLevelDetailView)AccessTools.Field(typeof(StandardLevelDetailViewController),"_standardLevelDetailView").GetValue(owner);
             display.stats=(RectTransform)((LevelParamsPanel)AccessTools.Field(typeof(StandardLevelDetailView),"_levelParamsPanel").GetValue(display.view)).transform;
             // Stay outside the native stats subtree: other mods clone it.
@@ -155,7 +162,18 @@ public sealed class MenuUI:MonoBehaviour
     void Position()
     {
         if(stats==null||actionButton==null||panel==null||graph==null)return;
-        float width=Mathf.Max(30,stats.rect.width);
+        rowContainer.gameObject.SetActive(visibility.HasStatistics);
+        if(!visibility.HasStatistics)
+        {
+            foreach(var item in shifted)if(item.Key!=null&&item.Key.anchoredPosition==item.Value.Applied)item.Key.anchoredPosition=item.Value.Original;
+            shifted.Clear();PositionFooter();return;
+        }
+        float left=Bounds(stats).min.x;
+        // The native stats rect includes unused cell width beyond the view's
+        // right edge. Use the actual difficulty block as the content boundary.
+        var widthReference=parent.Find("BeatmapDifficulty") as RectTransform;
+        float right=widthReference!=null?Bounds(widthReference).max.x:parent.rect.xMax;
+        float width=Mathf.Max(1,right-left);
         float scale=width/MenuDrawing.Width;
         var nativeRows=stats.parent.Cast<Transform>().Where(t=>t.gameObject.activeInHierarchy&&(t==stats||t.name.StartsWith(stats.name+"(",StringComparison.Ordinal)))
             .OfType<RectTransform>().ToArray();
@@ -175,10 +193,11 @@ public sealed class MenuUI:MonoBehaviour
         layoutScratch.Clear();
         if(float.IsPositiveInfinity(bottom))return;
         float top=bottom+Mathf.Max(0,stats.rect.height-rowHeight);
-        float left=Bounds(stats).min.x;
         rowContainer.anchoredPosition=new Vector2(left,top);
         rowContainer.sizeDelta=new Vector2(width,rowHeight);
         var element=panel.GetComponent<LayoutElement>();element.minHeight=element.preferredHeight=rowHeight;
+        element.minWidth=0;element.preferredWidth=width;
+        panel.rectTransform.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal,width);
         // Reserve real space before mode/difficulty rows rather than drawing on them.
         var characteristic=parent.Find("BeatmapCharacteristic") as RectTransform;
         if(characteristic!=null)
@@ -218,6 +237,7 @@ public sealed class MenuUI:MonoBehaviour
     void PositionFooter()
     {
         if(graph==null||actionButton==null)return;
+        if(!visibility.HasTimeline){graph.gameObject.SetActive(false);return;}
         if(parent.Find("BeatmapCharacteristic") is not RectTransform characteristic||
             parent.Find("BeatmapDifficulty") is not RectTransform difficulty)return;
         var mode=Bounds(characteristic);var levels=Bounds(difficulty);
@@ -242,11 +262,12 @@ public sealed class MenuUI:MonoBehaviour
         if(graph==null)return;
         float scale=Mathf.Max(1,graph.rectTransform.rect.width)/MenuDrawing.Width;
         float height=Mathf.Max(.01f,graph.rectTransform.rect.height/scale);
-        graph.Show(MenuDrawing.CompactGraph(data,height),height);
+        var drawing=MenuDrawing.CompactGraph(data,height);visibility.Apply(drawing);graph.Show(drawing,height);
         if(hints.Count<9)return;
         // Time labels cannot fit in this existing gap. Keep the density hit
         // region across the band and separate source hints over their markers.
         var density=(RectTransform)hints[6].transform;
+        density.gameObject.SetActive(visibility.Density);
         density.anchorMin=Vector2.zero;density.anchorMax=Vector2.one;density.offsetMin=density.offsetMax=Vector2.zero;
         for(int source=0;source<2;source++)
         {
@@ -254,7 +275,7 @@ public sealed class MenuUI:MonoBehaviour
             var positions=data.Markers.Where(m=>m.Source==name&&m.SongTimeSeconds.HasValue&&
                 m.NormalizedPosition.HasValue&&m.NormalizedPosition.Value>=0&&m.NormalizedPosition.Value<=1)
                 .Select(m=>(float)m.NormalizedPosition!.Value).ToArray();
-            var hint=hints[7+source];hint.gameObject.SetActive(positions.Length>0);
+            var hint=hints[7+source];hint.gameObject.SetActive(positions.Length>0&&(source==0?visibility.ImportedDeaths:visibility.OwnDeaths));
             if(positions.Length==0)continue;
             var rect=(RectTransform)hint.transform;
             float padding=MenuDrawing.CompactMarkerHalfExtent/MenuDrawing.Width;
@@ -354,9 +375,64 @@ public sealed class MenuUI:MonoBehaviour
             drawing.Triangles.RemoveAll(t=>averageIcon!=null&&Mathf.Max(t.A.X,Mathf.Max(t.B.X,t.C.X))<8||
                 peakIcon!=null&&Mathf.Min(t.A.X,Mathf.Min(t.B.X,t.C.X))>=26&&Mathf.Max(t.A.X,Mathf.Max(t.B.X,t.C.X))<32||
                 squatIcon!=null&&Mathf.Min(t.A.X,Mathf.Min(t.B.X,t.C.X))>=65&&Mathf.Max(t.A.X,Mathf.Max(t.B.X,t.C.X))<72);
-            float scale=Mathf.Max(30,stats.rect.width)/MenuDrawing.Width;
+            float scale=panel.rectTransform.rect.width/MenuDrawing.Width;
+            if(scale<=0)return;
             float[] positions={3.7f,21.7f,35.7f,49.7f},widths={13,10.3f,10.3f,6.3f};
             for(int i=0;i<4;i++){drawing.Labels[i].X=positions[i]/scale;drawing.Labels[i].Width=widths[i]/scale;drawing.Labels[i].Text=drawing.Labels[i].Text.Replace(" / ","/");}
+            visibility.Apply(drawing);
+            foreach(var label in drawing.Labels)
+            {
+                float measured=panel.MeasureText(label.Text);
+                if(measured>0)label.Width=measured/scale;
+            }
+            var iconBounds=new List<StatisticsBounds>();
+            void IncludeIcon(ImageView? icon,DrawGroup group,float originalX)
+            {
+                if(icon!=null)iconBounds.Add(new StatisticsBounds(group,(originalX-icon.rectTransform.rect.width/2)/scale,(originalX+icon.rectTransform.rect.width/2)/scale));
+            }
+            IncludeIcon(averageIcon,DrawGroup.Average,1.6f);
+            IncludeIcon(peakIcon,DrawGroup.Peak,19.6f);
+            IncludeIcon(squatIcon,DrawGroup.Squats,47.6f);
+            var layout=new StatisticsLayout(visibility,drawing,iconBounds.ToArray());
+            Plugin.Log.Debug(string.Format(CultureInfo.InvariantCulture,
+                "Statistics layout: nativeWidth={0:F2}; rowWidth={1:F2}; groups={2}; textWidths=[{3}]",
+                stats.rect.width,panel.rectTransform.rect.width,layout.Columns.Count,
+                string.Join(",",drawing.Labels.Select(label=>(label.Width*scale).ToString("F2",CultureInfo.InvariantCulture)))));
+            layout.Apply(drawing);
+            void MoveIcon(ImageView? icon,DrawGroup group,float originalX)
+            {
+                if(icon==null)return;
+                var rect=icon.rectTransform;
+                rect.anchoredPosition=new Vector2(originalX+layout.Offset(group)*scale,rect.anchoredPosition.y);
+            }
+            MoveIcon(averageIcon,DrawGroup.Average,1.6f);
+            MoveIcon(peakIcon,DrawGroup.Peak,19.6f);
+            MoveIcon(squatIcon,DrawGroup.Squats,47.6f);
+            if(averageIcon!=null)averageIcon.gameObject.SetActive(visibility.Average);
+            if(peakIcon!=null)peakIcon.gameObject.SetActive(visibility.Peak);
+            if(squatIcon!=null)squatIcon.gameObject.SetActive(visibility.Squats);
+            if(hints.Count>=6)
+            {
+                bool[] visible={visibility.Average,visibility.Peak,visibility.Median,visibility.FirstNotes,visibility.FirstNotes,visibility.Squats};
+                for(int i=0;i<6;i++)hints[i].gameObject.SetActive(visible[i]);
+                void MoveHint(int index,float left,float right)
+                {
+                    var rect=(RectTransform)hints[index].transform;
+                    rect.anchorMin=new Vector2(left/100,rect.anchorMin.y);
+                    rect.anchorMax=new Vector2(right/100,rect.anchorMax.y);
+                    rect.offsetMin=rect.offsetMax=Vector2.zero;
+                }
+                foreach(var column in layout.Columns)
+                {
+                    int index=column.Group switch {DrawGroup.Average=>0,DrawGroup.Peak=>1,DrawGroup.Median=>2,DrawGroup.Squats=>5,_=>3};
+                    if(column.Group==DrawGroup.FirstNotes)
+                    {
+                        float middle=(column.Left+column.Right)/2;
+                        MoveHint(3,column.Left,middle);MoveHint(4,middle,column.Right);
+                    }
+                    else MoveHint(index,column.Left,column.Right);
+                }
+            }
             panel.Show(drawing,panel.rectTransform.rect.height/scale);
         }
         ShowGraph();

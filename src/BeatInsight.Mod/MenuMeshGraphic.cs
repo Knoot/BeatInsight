@@ -15,6 +15,7 @@ public sealed class MenuMeshGraphic:MaskableGraphic
     float drawingHeight;
     bool blinking;
     TextMeshProUGUI? template;
+    TextMeshProUGUI? measurement;
     readonly CurvedCanvasSettingsHelper curvature=new();
     protected override void OnEnable()
     {
@@ -23,10 +24,24 @@ public sealed class MenuMeshGraphic:MaskableGraphic
     protected override void OnTransformParentChanged(){base.OnTransformParentChanged();curvature.Reset();}
     protected override void OnDestroy()
     {
-        drawing=new Drawing();labels.Clear();template=null;curvature.Reset();
+        drawing=new Drawing();labels.Clear();template=null;measurement=null;curvature.Reset();
         base.OnDestroy();
     }
     public void UseNativeText(TextMeshProUGUI value)=>template=value;
+    float NativeFontSize=>template==null?0:template.enableAutoSizing?template.fontSizeMax:template.fontSize;
+    public float MeasureText(string value)
+    {
+        if(template==null)return 0;
+        if(measurement==null)
+        {
+            measurement=Instantiate(template,rectTransform,false);
+            measurement.name="BeatInsight.TextMeasurement";
+            measurement.enabled=false;measurement.raycastTarget=false;
+            measurement.enableAutoSizing=false;measurement.enableWordWrapping=false;
+        }
+        measurement.fontSize=measurement.fontSizeMin=measurement.fontSizeMax=NativeFontSize;
+        return measurement.GetPreferredValues(value).x;
+    }
     public void Show(Drawing value,float height)
     {
         drawing=value;drawingHeight=height;raycastTarget=false;
@@ -47,7 +62,7 @@ public sealed class MenuMeshGraphic:MaskableGraphic
             r.anchorMin=r.anchorMax=new Vector2(0,1);r.pivot=new Vector2(0,.5f);
             float sx=rectTransform.rect.width/MenuDrawing.Width,sy=rectTransform.rect.height/drawingHeight;
             r.anchoredPosition=new Vector2(item.X*sx,-item.Y*sy);r.sizeDelta=new Vector2(item.Width*sx,5*sy);
-            float size=template==null?item.Size*sx:template.enableAutoSizing?template.fontSizeMax:template.fontSize;
+            float size=template==null?item.Size*sx:NativeFontSize;
             text.text=item.Text;text.fontSize=text.fontSizeMax=size;text.fontSizeMin=size;
             text.color=template==null?Color.white:template.color;
         }

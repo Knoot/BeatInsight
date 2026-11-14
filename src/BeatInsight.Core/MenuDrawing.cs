@@ -22,14 +22,17 @@ public sealed class DrawTriangle
     public DrawColor Color;
     public float AlphaA=1,AlphaB=1,AlphaC=1;
     public bool Blink;
+    public DrawGroup Group;
 }
 public sealed class DrawLabel
 {
     public float X,Y,Size,Width;
     public string Text="";
+    public DrawGroup Group;
 }
 public sealed class Drawing
 {
+    internal DrawGroup Group;
     public readonly List<DrawTriangle> Triangles=new List<DrawTriangle>();
     public readonly List<DrawLabel> Labels=new List<DrawLabel>();
 }
@@ -74,7 +77,7 @@ public sealed class MenuRenderData
 public static class MenuDrawing
 {
     public const float Width=100,PanelHeight=8.3f,GraphHeight=10;
-    static void Tri(Drawing d,DrawPoint a,DrawPoint b,DrawPoint c,DrawColor color)=>d.Triangles.Add(new DrawTriangle {A=a,B=b,C=c,Color=color});
+    static void Tri(Drawing d,DrawPoint a,DrawPoint b,DrawPoint c,DrawColor color)=>d.Triangles.Add(new DrawTriangle {A=a,B=b,C=c,Color=color,Group=d.Group});
     static void Quad(Drawing d,DrawPoint a,DrawPoint b,DrawPoint c,DrawPoint e,DrawColor color){Tri(d,a,b,c,color);Tri(d,a,c,e,color);}
     static void Rect(Drawing d,float x,float y,float w,float h,DrawColor c)=>Quad(d,new DrawPoint(x,y),new DrawPoint(x+w,y),new DrawPoint(x+w,y+h),new DrawPoint(x,y+h),c);
     static void Line(Drawing d,float x,float y,float ex,float ey,float thickness,DrawColor c)
@@ -83,20 +86,27 @@ public static class MenuDrawing
         float nx=-dy/length*thickness/2,ny=dx/length*thickness/2;
         Quad(d,new DrawPoint(x+nx,y+ny),new DrawPoint(ex+nx,ey+ny),new DrawPoint(ex-nx,ey-ny),new DrawPoint(x-nx,y-ny),c);
     }
-    static void Label(Drawing d,string text,float x,float y,float width,float size)=>d.Labels.Add(new DrawLabel {Text=text,X=x,Y=y,Width=width,Size=size});
+    static void Label(Drawing d,string text,float x,float y,float width,float size)=>d.Labels.Add(new DrawLabel {Text=text,X=x,Y=y,Width=width,Size=size,Group=d.Group});
     public static Drawing Panel(MenuRenderData data)
     {
         var d=new Drawing();var white=DrawColor.White;
+        d.Group=DrawGroup.Average;
         // Average trend, peak bars, median center line; no explanatory headings.
         Line(d,.3f,6,1.6f,4,.45f,white);Line(d,1.6f,4,3,5,.45f,white);Line(d,3,5,4.5f,2.6f,.45f,white);
         Line(d,4.5f,2.6f,4.2f,4,.4f,white);Line(d,4.5f,2.6f,3,2.7f,.4f,white);
+        d.Group=DrawGroup.Peak;
         for(int i=0;i<3;i++)Rect(d,26+i*1.5f,6-(i+1)*1.2f,.85f,(i+1)*1.2f,white);
+        d.Group=DrawGroup.Median;
         Line(d,46,3.2f,50.3f,3.2f,.32f,white);Line(d,46,4.7f,50.3f,4.7f,.65f,white);Line(d,46,6.2f,50.3f,6.2f,.32f,white);
-        Label(d,data.Average,5.3f,4.7f,18.5f,3.3f);Label(d,data.Peak,31,4.7f,14.7f,3.3f);Label(d,data.Median,51,4.7f,14.7f,3.3f);
+        d.Group=DrawGroup.Average;Label(d,data.Average,5.3f,4.7f,18.5f,3.3f);
+        d.Group=DrawGroup.Peak;Label(d,data.Peak,31,4.7f,14.7f,3.3f);
+        d.Group=DrawGroup.Median;Label(d,data.Median,51,4.7f,14.7f,3.3f);
         // Five groups on one baseline: AVG, PEAK, MEDIAN, SQUAT, first notes.
+        d.Group=DrawGroup.Squats;
         Rect(d,67.5f,1.7f,1,1,white);Line(d,68,3,69,4.5f,.5f,white);Line(d,69,4.5f,66.5f,4.7f,.5f,white);
         Line(d,66.5f,4.7f,68.5f,7.2f,.5f,white);Line(d,69,4.5f,71,7,.5f,white);Line(d,68.4f,3.5f,71,3,.45f,white);
         Label(d,data.Squats,71,4.7f,9,3.3f);
+        d.Group=DrawGroup.FirstNotes;
         Note(d,data.Left,84,4.7f);Note(d,data.Right,91.5f,4.7f);
         return d;
     }
@@ -122,8 +132,8 @@ public static class MenuDrawing
         {
             int next=(i+1)%inner.Length;
             Tri(d,P(0,0),inner[i],inner[next],note.Color);
-            d.Triangles.Add(new DrawTriangle {A=inner[i],B=outer[i],C=outer[next],Color=note.Color,AlphaB=0,AlphaC=0});
-            d.Triangles.Add(new DrawTriangle {A=inner[i],B=outer[next],C=inner[next],Color=note.Color,AlphaB=0});
+            d.Triangles.Add(new DrawTriangle {A=inner[i],B=outer[i],C=outer[next],Color=note.Color,AlphaB=0,AlphaC=0,Group=d.Group});
+            d.Triangles.Add(new DrawTriangle {A=inner[i],B=outer[next],C=inner[next],Color=note.Color,AlphaB=0,Group=d.Group});
         }
         if(!note.RotationZ.HasValue)
             for(float x=-2;x<=2;x+=1)for(float y=-2;y<=2;y+=1)
@@ -145,9 +155,9 @@ public static class MenuDrawing
     }
     public static Drawing Graph(MenuRenderData data)
     {
-        var d=new Drawing();
-        if(data.Colors.Length==0||data.Duration<=0){Label(d,"—",48,5,5,3);return d;}
-        float step=Width/data.Colors.Length;
+        var d=new Drawing {Group=DrawGroup.Density};
+        if(data.Duration<=0){Label(d,"—",48,5,5,3);return d;}
+        float step=data.Colors.Length>0?Width/data.Colors.Length:0;
         for(int i=0;i<data.Colors.Length;i++)
         {
             var c=data.Colors[i];if(c.Length<4)continue;
@@ -164,8 +174,10 @@ public static class MenuDrawing
             if(!drawn.Add((m.Source,(int)Math.Round(position*1000))))continue;
             float x=Math.Max(.8f,Math.Min(Width-.8f,Width*(float)position)),y=4.2f;
             var color=m.Source=="legacy"?new DrawColor(1,1,0):new DrawColor(1,0,0);
+            d.Group=m.Source=="legacy"?DrawGroup.ImportedDeaths:DrawGroup.OwnDeaths;
             Line(d,x-.6f,y-.6f,x+.6f,y+.6f,.4f,color);Line(d,x-.6f,y+.6f,x+.6f,y-.6f,.4f,color);
         }
+        d.Group=DrawGroup.Density;
         for(int i=0;i<=4;i++)
         {
             int seconds=(int)(data.Duration*i/4);string time=(seconds/60)+":"+(seconds%60).ToString("00",CultureInfo.InvariantCulture);
@@ -198,7 +210,7 @@ public static class MenuDrawing
             var t=drawing.Triangles[i];t.A=Move(t.A);t.B=Move(t.B);t.C=Move(t.C);
         }
         drawing.Labels.Clear();
-        if(bandTriangles==0)Label(drawing,"—",48,height/2,5,Math.Min(3,height));
+        if(bandTriangles==0&&drawing.Triangles.Count==0)Label(drawing,"—",48,height/2,5,Math.Min(3,height));
         return drawing;
     }
 }

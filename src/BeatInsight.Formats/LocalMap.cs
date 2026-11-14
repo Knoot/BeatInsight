@@ -58,7 +58,7 @@ public static class LocalMap
         else
             foreach (var d in Items(info["difficultyBeatmaps"])) yield return new MapCase { Folder = folder, Characteristic = (string)d["characteristic"]!, Difficulty = (string)d["difficulty"]!, File = (string)d["beatmapDataFilename"]! };
     }
-    public static LoadedMap Load(MapCase test)
+    public static LoadedMap Load(MapCase test,AnalysisFeatures features=AnalysisFeatures.All)
     {
         var info = Info(test.Folder);
         string json = System.IO.File.ReadAllText(SafePath(test.Folder, test.File));
@@ -73,6 +73,11 @@ public static class LocalMap
         int major = int.Parse(version.Split('.')[0]);
         float bpm = F(info["_beatsPerMinute"] ?? info["audio"]?["bpm"]);
         if (bpm <= 0) throw new InvalidDataException("Invalid initial BPM");
+        bool needNotes=(features&(AnalysisFeatures.Average|AnalysisFeatures.Peak|AnalysisFeatures.Median|AnalysisFeatures.FirstNotes|AnalysisFeatures.Density|AnalysisFeatures.ImportedDeaths|AnalysisFeatures.Reference))!=0;
+        bool needDuration=(features&(AnalysisFeatures.Density|AnalysisFeatures.ImportedDeaths|AnalysisFeatures.OwnDeaths|AnalysisFeatures.Reference))!=0;
+        bool orientation=(features&(AnalysisFeatures.FirstNotes|AnalysisFeatures.Reference))!=0;
+        if(!needNotes)return new LoadedMap {Json=json,Bpm=bpm,Version=version,
+            Input=new MapInput {Duration=needDuration?ReadDuration(info,test.Folder):0}};
         JObject? audio = null; string? audioJson = null;
         if (major == 4)
         {
@@ -112,10 +117,10 @@ public static class LocalMap
             int color = I(data[major == 2 ? "_type" : "c"]);
             if (color != 0 && color != 1) continue;
             float beat = F(n[major == 2 ? "_time" : "b"]);
-            bool customRotation=new[]{"customData","_customData"}.Select(k=>data[k]).Where(t=>t!=null).OfType<JContainer>()
+            bool customRotation=orientation&&new[]{"customData","_customData"}.Select(k=>data[k]).Where(t=>t!=null).OfType<JContainer>()
                 .SelectMany(t=>t.Descendants().OfType<JProperty>()).Any(p=>new[]{"rotation","localRotation","animation","position","coordinates","cutDirection","_rotation","_localRotation","_animation","_position","_cutDirection"}.Contains(p.Name));
             notes.Add(new MapNote { Beat = beat, Time = Time(beat), X = I(data[major == 2 ? "_lineIndex" : "x"]), Y = I(data[major == 2 ? "_lineLayer" : "y"]), Color = color, Direction = I(data[major == 2 ? "_cutDirection" : "d"]),
-                CutDirectionAngleOffset=customRotation?(float?)null:F(data["a"]) });
+                CutDirectionAngleOffset=orientation?(customRotation?(float?)null:F(data["a"])):null });
         }
         var arcs=new List<PreparedSlider>();var chains=new List<PreparedSlider>();
         foreach (var arc in Items(root[major == 4 ? "arcs" : "sliders"]))
@@ -139,9 +144,9 @@ public static class LocalMap
         }
         var bombs=major==2?rawNotes.Where(n=>I(n["_type"])==3).Select(n=>new MapNote {Beat=F(n["_time"]),Time=Time(F(n["_time"])),X=I(n["_lineIndex"]),Y=I(n["_lineLayer"]),Color=-1,Direction=9,ScoringType=0}).ToList():
             Items(root["bombNotes"]).Select(n=>{var d=major==4?root["bombNotesData"]![I(n["i"])]!:n;return new MapNote {Beat=F(n["b"]),Time=Time(F(n["b"])),X=I(d["x"]),Y=I(d["y"]),Color=-1,Direction=9,ScoringType=0};}).ToList();
-        var prepared=NotePreparation.Prepare(notes,bombs,arcs,chains,chainsBeforeArcs:major==4);
+        var prepared=NotePreparation.Prepare(notes,bombs,arcs,chains,chainsBeforeArcs:major==4,prepareOrientation:orientation);
         var walls = new List<MapWall>();
-        foreach (var w in Items(root[major == 2 ? "_obstacles" : "obstacles"]))
+        foreach (var w in (features&(AnalysisFeatures.Average|AnalysisFeatures.Peak|AnalysisFeatures.Median|AnalysisFeatures.Reference))!=0?Items(root[major == 2 ? "_obstacles" : "obstacles"]):Enumerable.Empty<JToken>())
         {
             var data = major == 4 ? root["obstaclesData"]![I(w["i"])]! : w;
             float beat = F(w[major == 2 ? "_time" : "b"]), end = beat + F(data[major == 2 ? "_duration" : "d"]);
@@ -149,14 +154,18 @@ public static class LocalMap
             var wall=new MapWall { Beat=beat, EndBeat=end, Time=Time(beat), Duration=Time(end)-Time(beat), X=I(data[major == 2 ? "_lineIndex" : "x"]), Y=major==2 ? (type==1?2:0) : I(data["y"]), Width=I(data[major == 2 ? "_width" : "w"]), Height=major==2 ? (type==1?3:5) : I(data["h"]) };
             if(wall.Width>0&&wall.Duration>0)walls.Add(wall);
         }
-        var features = new List<string> { "v"+major };
-        if (changes.Count > 1) features.Add("bpm-changes");
-        if (Items(root[major==4?"arcs":"sliders"]).Any()) features.Add("arcs");
-        if (Items(root[major==4?"chains":"burstSliders"]).Any()) features.Add("chains");
-        if (notes.Any(n => n.Direction==8)) features.Add("dots");
-        float duration = F(info["audio"]?["songDuration"]);
-        if (duration <= 0) duration = OggDuration(SafePath(test.Folder, (string)(info["audio"]?["songFilename"]??info["_songFilename"])!));
-        return new LoadedMap { Json=json, AudioJson=audioJson, Bpm=bpm, Version=version, Features=features.ToArray(), Input=new MapInput { Duration=duration, Notes=prepared, Walls=walls.OrderBy(w=>w.Time).ToArray() } };
+        var mapFeatures = new List<string> { "v"+major };
+        if (changes.Count > 1) mapFeatures.Add("bpm-changes");
+        if (Items(root[major==4?"arcs":"sliders"]).Any()) mapFeatures.Add("arcs");
+        if (Items(root[major==4?"chains":"burstSliders"]).Any()) mapFeatures.Add("chains");
+        if (notes.Any(n => n.Direction==8)) mapFeatures.Add("dots");
+        float duration = needDuration?ReadDuration(info,test.Folder):0;
+        return new LoadedMap { Json=json, AudioJson=audioJson, Bpm=bpm, Version=version, Features=mapFeatures.ToArray(), Input=new MapInput { Duration=duration, Notes=prepared, Walls=walls.OrderBy(w=>w.Time).ToArray() } };
+    }
+    static float ReadDuration(JObject info,string folder)
+    {
+        float duration=F(info["audio"]?["songDuration"]);
+        return duration>0?duration:OggDuration(SafePath(folder,(string)(info["audio"]?["songFilename"]??info["_songFilename"])!));
     }
     static float OggDuration(string path)
     {

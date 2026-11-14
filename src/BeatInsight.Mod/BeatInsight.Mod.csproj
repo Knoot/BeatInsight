@@ -27,13 +27,14 @@
     <Reference Include="Unity.TextMeshPro" HintPath="$(GameRoot)/Beat Saber_Data/Managed/Unity.TextMeshPro.dll" Private="false" />
     <Reference Include="UnityEngine.TextRenderingModule" HintPath="$(GameRoot)/Beat Saber_Data/Managed/UnityEngine.TextRenderingModule.dll" Private="false" />
     <Reference Include="UnityEngine.CoreModule" HintPath="$(GameRoot)/Beat Saber_Data/Managed/UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="UnityEngine.PhysicsModule" HintPath="$(GameRoot)/Beat Saber_Data/Managed/UnityEngine.PhysicsModule.dll" Private="false" />
   </ItemGroup>
   <ItemGroup>
     <!-- The game resolves these dependencies. Avoid recursively resolving its
          unrelated framework assemblies against the build machine's references. -->
     <Reference Update="@(Reference)" ExternallyResolved="true" />
   </ItemGroup>
-  <ItemGroup><EmbeddedResource Include="manifest.json" /></ItemGroup>
+  <ItemGroup><EmbeddedResource Include="manifest.json" /><EmbeddedResource Include="Settings.bsml" /></ItemGroup>
   <Target Name="ValidateGameDependencies" BeforeTargets="ResolveAssemblyReferences">
     <Error Condition="'$(GameRoot)' == ''" Text="Configure GameRoot in paths.props or BEATINSIGHT_GAME_ROOT." />
     <Error Condition="!Exists('$(GameRoot)/Beat Saber_Data/Managed/IPA.Loader.dll')" Text="Configured game has no BSIPA loader." />

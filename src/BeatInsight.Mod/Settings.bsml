@@ -1,0 +1,27 @@
+  <settings-container child-control-width='true' child-expand-width='true' child-control-height='true' child-expand-height='false' child-align='UpperCenter' spacing='0.5' size-delta-y='-15'>
+    <horizontal child-control-width='true' child-expand-width='true' child-control-height='true' child-expand-height='false' pad-top='3' pad-bottom='1' pref-height='9' flexible-height='0'>
+      <text text='&lt;b&gt;MENU STATISTICS&lt;/b&gt;' font-size='4' font-color='#00CCFF' pref-height='5' flexible-height='0' />
+    </horizontal>
+    <toggle-setting text='Average swings' value='show-average' apply-on-change='true' bind-value='true' />
+    <toggle-setting text='Peak swings' value='show-peak' apply-on-change='true' bind-value='true' />
+    <toggle-setting text='Median swings' value='show-median' apply-on-change='true' bind-value='true' />
+    <toggle-setting text='Squat count' value='show-squats' apply-on-change='true' bind-value='true' />
+    <toggle-setting text='First notes' value='show-first-notes' apply-on-change='true' bind-value='true' />
+    <horizontal child-control-width='true' child-expand-width='true' child-control-height='true' child-expand-height='false' pad-top='3' pad-bottom='1' pref-height='9' flexible-height='0'>
+      <text text='&lt;b&gt;TIMELINE&lt;/b&gt;' font-size='4' font-color='#00CCFF' pref-height='5' flexible-height='0' />
+    </horizontal>
+    <toggle-setting text='Object density' value='show-density' apply-on-change='true' bind-value='true' />
+    <toggle-setting text='Imported death markers' value='show-imported-deaths' apply-on-change='true' bind-value='true' />
+    <toggle-setting text='Own death markers' value='show-own-deaths' apply-on-change='true' bind-value='true' />
+    <horizontal child-control-width='true' child-expand-width='true' child-control-height='true' child-expand-height='false' pad-top='3' pad-bottom='1' pref-height='9' flexible-height='0'>
+      <text text='&lt;b&gt;HISTORY&lt;/b&gt;' font-size='4' font-color='#00CCFF' pref-height='5' flexible-height='0' />
+    </horizontal>
+    <toggle-setting text='Record deaths' value='record-deaths' apply-on-change='true' bind-value='true' />
+    <text text='Turning recording off keeps existing history.' font-size='3' font-color='#A0AAB8' pref-height='5' flexible-height='0' />
+    <horizontal child-control-width='true' child-expand-width='true' child-control-height='true' child-expand-height='false' pad-top='3' pad-bottom='1' pref-height='9' flexible-height='0'>
+      <text text='&lt;b&gt;SQUAT WARNINGS&lt;/b&gt;' font-size='4' font-color='#00CCFF' pref-height='5' flexible-height='0' />
+    </horizontal>
+    <toggle-setting text='Enable squat warnings' value='squat-warnings' apply-on-change='true' bind-value='true' />
+    <slider-setting text='Warning lead time (s)' value='squat-warning-lead' min='0.5' max='5' increment='0.1' integer-only='false' show-buttons='true' apply-on-change='true' bind-value='true' />
+    <toggle-setting text='Circle indicators' value='squat-warning-circles' hover-hint='Show two red circles instead of DUCK text.' apply-on-change='true' bind-value='true' />
+  </settings-container>

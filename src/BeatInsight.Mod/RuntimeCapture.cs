@@ -52,6 +52,7 @@ internal static class RuntimeCapture
         if(!enabled)return;
         // Never reuse an attempt or a manager's failure handler across scene setups.
         DetachAll();current=null;createSession=null;restartPending=false;
+        if(!Plugin.Config.RecordDeaths)Plugin.Log.Debug("Death recording disabled by settings.");
         var key=setup.beatmapKey;
         if(string.IsNullOrEmpty(key.levelId)||key.beatmapCharacteristic==null)return;
         var m=setup.gameplayModifiers;
@@ -70,7 +71,11 @@ internal static class RuntimeCapture
             }};
         string mapKey=PlayHistory.Key(key.levelId,(int)key.difficulty,key.beatmapCharacteristic.serializedName);
         bool practice=setup.practiceSettings!=null;
-        createSession=()=>new Session {Setup=setup,Attempt=new DeathAttempt(mapKey,modifiers,practice)};
+        createSession=()=> {
+            var attempt=new DeathAttempt(mapKey,modifiers,practice);
+            if(!Plugin.Config.RecordDeaths)attempt.SuppressRecording();
+            return new Session {Setup=setup,Attempt=attempt};
+        };
         current=createSession();
         Plugin.Log.Debug("Death capture started: "+mapKey+"; practice="+practice);
     }
@@ -82,6 +87,7 @@ internal static class RuntimeCapture
         // without calling InitAndSetupScenes again. Rearm at the new manager's Start.
         if(current==null&&restartPending&&createSession!=null){current=createSession();restartPending=false;}
         if(current==null)return;
+        if(!Plugin.Config.RecordDeaths)SuppressRecording();
         var session=current;
         Action failure=()=> {
             if(!ReferenceEquals(current,session))return;
@@ -126,6 +132,7 @@ internal static class RuntimeCapture
     {
         if(!enabled||current==null||!ReferenceEquals(current.Setup,setup))return;
         if(finishedResults.TryGetValue(results,out _))return;
+        if(!Plugin.Config.RecordDeaths)SuppressRecording();
         finishedResults.Add(results,new object());
         var session=current;current=null;DetachAll();
         restartPending=results.levelEndAction==LevelCompletionResults.LevelEndAction.Restart;
@@ -154,4 +161,5 @@ internal static class RuntimeCapture
 
     internal static Task PendingHistoryWrites()
     {lock(writerLock)return pendingWrite;}
+    internal static void SuppressRecording()=>current?.Attempt.SuppressRecording();
 }

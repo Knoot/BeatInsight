@@ -16,11 +16,12 @@ public sealed class MenuSelection
     public string Characteristic {get;}
     public string Difficulty {get;}
     public int DifficultyRank {get;}
+    public AnalysisFeatures Features {get;}
     internal BeatmapLevelsModel Model {get;}
     internal BeatmapKey Key {get;}
-    internal MenuSelection(BeatmapLevelsModel model,BeatmapKey key)
+    internal MenuSelection(BeatmapLevelsModel model,BeatmapKey key,AnalysisFeatures features)
     {
-        Model=model;Key=key;LevelId=key.levelId;Characteristic=key.beatmapCharacteristic.serializedName;
+        Model=model;Key=key;Features=features;LevelId=key.levelId;Characteristic=key.beatmapCharacteristic.serializedName;
         Difficulty=key.difficulty.ToString();DifficultyRank=(int)key.difficulty;
     }
 }
@@ -98,13 +99,25 @@ public static class MenuAnalysis
     static void Submit(StandardLevelDetailViewController controller)
     {
         if(requests==null||!ReferenceEquals(active,controller))return;
+        var features=Plugin.Config.Visibility().Features;
+        if(features==AnalysisFeatures.None)
+        {
+            if(submittedKey!=null||requests.Current.Status!=SelectionStatus.Idle)Observe(requests.ClearAsync());
+            submittedKey=null;return;
+        }
         bool ready=(bool)AccessTools.Field(typeof(StandardLevelDetailViewController),"_contentIsOwnedAndReady").GetValue(controller);
         if(!ready){Unavailable("Game content is not ready");return;}
         var key=controller.beatmapKey;
         if(controller.beatmapLevel==null||!key.IsValid()||model==null){Clear(controller);return;}
-        string identity=PlayHistory.Key(key.levelId,(int)key.difficulty,key.beatmapCharacteristic.serializedName);
+        string identity=PlayHistory.Key(key.levelId,(int)key.difficulty,key.beatmapCharacteristic.serializedName)+"|"+(int)features;
         if(submittedKey==identity&&(requests.Current.Status==SelectionStatus.Loading||requests.Current.Status==SelectionStatus.Ready))return;
-        submittedKey=identity;Observe(requests.SelectAsync(new MenuSelection(model,key)));
+        submittedKey=identity;Observe(requests.SelectAsync(new MenuSelection(model,key,features)));
+    }
+
+    internal static void SettingsChanged()
+    {
+        if(active!=null&&requests!=null&&requests.Current.Request?.Features!=Plugin.Config.Visibility().Features)
+            DifficultyChanged(active);
     }
 
     static async Task<SelectedMapAnalysis> LoadAsync(MenuSelection selection,CancellationToken token)
@@ -126,12 +139,12 @@ public static class MenuAnalysis
             string file=(string)AccessTools.Field(typeof(FileDifficultyBeatmap),"_beatmapPath").GetValue(entry);
             string userData=IPA.Utilities.UnityGame.UserDataPath;
             return new SelectedMapRequest(selection.LevelId,selection.Characteristic,selection.Difficulty,selection.DifficultyRank,file,
-                Path.Combine(userData,"SongPlayData.json"),Path.Combine(userData,DeathHistoryStore.FileName));
+                Path.Combine(userData,"SongPlayData.json"),Path.Combine(userData,DeathHistoryStore.FileName),features:selection.Features);
         }).ConfigureAwait(false);
         token.ThrowIfCancellationRequested();
         // Returning to the menu can race with our background death write. Await
         // the already queued write before opening history; never block Unity.
-        await RuntimeCapture.PendingHistoryWrites().ConfigureAwait(false);
+        if((selection.Features&AnalysisFeatures.OwnDeaths)!=0)await RuntimeCapture.PendingHistoryWrites().ConfigureAwait(false);
         token.ThrowIfCancellationRequested();
         return await SelectedMapAnalyzer.LoadAsync(snapshot,token).ConfigureAwait(false);
     }
@@ -145,7 +158,7 @@ public static class MenuAnalysis
     static void HistoryWritten()
     {
         Observe(UnityMainThreadTaskScheduler.Factory.StartNew(()=> {
-            if(active==null||requests==null)return;
+            if(active==null||requests==null||(Plugin.Config.Visibility().Features&AnalysisFeatures.OwnDeaths)==0)return;
             submittedKey=null;Submit(active);
         }));
     }

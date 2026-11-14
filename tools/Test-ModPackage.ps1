@@ -6,11 +6,16 @@ $ErrorActionPreference='Stop'
 $GameRoot=Get-BeatInsightSetting GameRoot $GameRoot
 Add-Type -Path (Get-BeatInsightSetting CecilPath)
 $modules=[Collections.Generic.List[Mono.Cecil.ModuleDefinition]]::new()
+$resolver=[Mono.Cecil.DefaultAssemblyResolver]::new()
+$resolver.AddSearchDirectory((Join-Path $GameRoot 'Libs'))
+$resolver.AddSearchDirectory((Join-Path $GameRoot 'Beat Saber_Data/Managed'))
+$readerParameters=[Mono.Cecil.ReaderParameters]::new()
+$readerParameters.AssemblyResolver=$resolver
 try {
     $expected=@('Plugins/BeatInsight.dll','Libs/BeatInsight.Core.dll','Libs/BeatInsight.Formats.dll','Libs/BeatInsight.WallAlert.dll')
     $actual=@(Get-ChildItem -LiteralPath $PackageDirectory -File -Recurse|ForEach-Object {[IO.Path]::GetRelativePath([IO.Path]::GetFullPath($PackageDirectory),$_.FullName).Replace('\','/')})
     if(@(Compare-Object $expected $actual).Count){throw 'Package must contain only the four own assemblies.'}
-    $plugin=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $PackageDirectory 'Plugins/BeatInsight.dll'));$modules.Add($plugin)
+    $plugin=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $PackageDirectory 'Plugins/BeatInsight.dll'),$readerParameters);$modules.Add($plugin)
     $main=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $GameRoot 'Beat Saber_Data/Managed/Main.dll'));$modules.Add($main)
     $resources=@($plugin.Resources|Where-Object Name -like '*.manifest.json')
     if($resources.Count -ne 1){throw 'Expected one embedded BSIPA manifest.'}
@@ -18,6 +23,29 @@ try {
     try {$manifest=$reader.ReadToEnd()|ConvertFrom-Json}finally{$reader.Dispose()}
     if($manifest.id -ne 'BeatInsight' -or $manifest.gameVersion -ne '1.40.8' -or $manifest.version -ne '0.1.0'){throw 'Unexpected manifest identity or version.'}
     if(!$manifest.dependsOn.BeatSaberMarkupLanguage){throw 'Menu rendering requires a declared BSML dependency.'}
+    $settingsResource=@($plugin.Resources|Where-Object Name -eq 'BeatInsight.Mod.Settings.bsml')
+    if($settingsResource.Count -ne 1){throw 'Missing embedded settings screen.'}
+    $reader=[IO.StreamReader]::new($settingsResource[0].GetResourceStream())
+    try{[xml]$settingsXml=$reader.ReadToEnd()}finally{$reader.Dispose()}
+    $controls=@($settingsXml.SelectNodes('//toggle-setting | //slider-setting'))
+    $config=$plugin.Types|Where-Object FullName -eq 'BeatInsight.Mod.PluginConfig'
+    $bindings=@($config.Properties|Where-Object {$_.CustomAttributes.AttributeType.FullName -contains 'BeatSaberMarkupLanguage.Attributes.UIValue'})
+    if($controls.Count -ne 12 -or $bindings.Count -ne 12){throw 'Expected twelve persisted settings controls.'}
+    $ids=@($bindings|ForEach-Object {($_.CustomAttributes|Where-Object {$_.AttributeType.FullName -eq 'BeatSaberMarkupLanguage.Attributes.UIValue'}).ConstructorArguments[0].Value})
+    if(@(Compare-Object $ids @($controls|ForEach-Object {$_.GetAttribute('value')})).Count -or @($ids|Sort-Object -Unique).Count -ne 12){throw 'Settings bindings are missing or duplicated.'}
+    foreach($property in $bindings){
+        $expectedType=if($property.Name -eq 'SquatWarningLeadTime'){'System.Single'}else{'System.Boolean'}
+        if(!$property.GetMethod.IsVirtual -or !$property.SetMethod.IsVirtual -or $property.PropertyType.FullName -ne $expectedType){throw 'Settings must be virtual persisted values of the expected type.'}
+    }
+    $bsml=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $GameRoot 'Plugins/BSML.dll'));$modules.Add($bsml)
+    foreach($item in @(
+        @{type='BeatSaberMarkupLanguage.GameplaySetup.GameplaySetup';field='menus'},
+        @{type='BeatSaberMarkupLanguage.GameplaySetup.GameplaySetupMenu';property='Host'},
+        @{type='BeatSaberMarkupLanguage.GameplaySetup.GameplaySetupMenu';field='tabObject'})){
+        $type=$bsml.Types|Where-Object FullName -eq $item.type
+        $member=if($item.field){$type.Fields|Where-Object Name -eq $item.field}else{$type.Properties|Where-Object Name -eq $item.property}
+        if(!$type -or !$member){throw "Gameplay settings cleanup contract changed: $($item.type)"}
+    }
     $entry=@($plugin.Types|Where-Object {@($_.CustomAttributes|Where-Object {$_.AttributeType.FullName -eq 'IPA.PluginAttribute'}).Count})
     if($entry.Count -ne 1){throw 'Expected one BSIPA plugin entry.'}
     if($resources[0].Name -ne ($entry[0].Namespace+'.manifest.json')){throw 'Manifest namespace differs from plugin entry namespace.'}
@@ -30,6 +58,10 @@ try {
         foreach($attribute in $type.CustomAttributes|Where-Object {$_.AttributeType.FullName -eq 'HarmonyLib.HarmonyPatch'}){
             $targetTypeName=$attribute.ConstructorArguments[0].Value.FullName
             $targetName=$attribute.ConstructorArguments[1].Value
+            if($attribute.ConstructorArguments[1].Type.FullName -eq 'HarmonyLib.MethodType'){
+                if([int]$targetName -ne 3){throw 'Only the explicitly validated constructor method type is supported.'}
+                $targetName='.ctor'
+            }
             $targetType=$main.Types|Where-Object FullName -eq $targetTypeName
             $targets=@($targetType.Methods|Where-Object Name -eq $targetName)
             if($targets.Count -ne 1){throw "Missing or ambiguous Harmony target: $targetTypeName::$targetName"}
@@ -51,7 +83,7 @@ try {
             $patches.Add(@{type=$targetTypeName;method=$targetName})
         }
     }
-    if($patches.Count -ne 9){throw 'Expected four gameplay, one seek and four menu lifecycle patches.'}
+    if($patches.Count -ne 13){throw 'Expected four gameplay, one seek, five menu/settings and three squat callback lifecycle patches.'}
     $models=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $GameRoot 'Beat Saber_Data/Managed/DataModels.dll'));$modules.Add($models)
     $hmui=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $GameRoot 'Beat Saber_Data/Managed/HMUI.dll'));$modules.Add($hmui)
     foreach($item in @(
@@ -83,4 +115,4 @@ try {
     $result=@{status='pass';validation='metadata, packaged references and Harmony signatures; game not started';gameVersion=$manifest.gameVersion;patches=$patches.ToArray();references=$references.ToArray();files=@($expected|ForEach-Object {@{file=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $PackageDirectory $_)).Hash}})}
     if($Report){$result|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $Report}
     Write-Host "Package metadata, references and $($patches.Count) Harmony targets verified."
-} finally {foreach($module in $modules){$module.Dispose()}}
+} finally {foreach($module in $modules){$module.Dispose()};$resolver.Dispose()}

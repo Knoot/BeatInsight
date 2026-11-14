@@ -17,6 +17,8 @@ public sealed class DeathAttempt
     long failureDate;
     bool completed;
     bool sought;
+    bool recordingSuppressed;
+    public void SuppressRecording(){if(!completed){recordingSuppressed=true;failureTime=null;}}
     public string? ExclusionReason {get;private set;}
     public bool ExcludeAfterSeek()
     {
@@ -38,7 +40,7 @@ public sealed class DeathAttempt
 
     public bool CaptureFailure(double songTimeSeconds,long unixMilliseconds)
     {
-        if(practice||sought||completed||failureTime.HasValue||!ValidTime(songTimeSeconds))return false;
+        if(practice||sought||recordingSuppressed||completed||failureTime.HasValue||!ValidTime(songTimeSeconds))return false;
         failureTime=songTimeSeconds;failureDate=unixMilliseconds;return true;
     }
 
@@ -49,6 +51,7 @@ public sealed class DeathAttempt
         // A restart/quit after an observed failure can carry Incomplete. A plain
         // restart/quit has no failure event and must never create a death record.
         if(practice){ExclusionReason="practice";return null;}
+        if(recordingSuppressed){ExclusionReason="recording-disabled";return null;}
         if(sought){ExclusionReason="song-seek";return null;}
         if(outcome==AttemptOutcome.Cleared){ExclusionReason="cleared";return null;}
         // Modified completion results are not evidence of a real failure.

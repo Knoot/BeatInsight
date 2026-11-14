@@ -18,9 +18,9 @@ internal sealed class PreparedSlider
 // overlap is geometric (not color-dependent), and head operations retain their order.
 internal static class NotePreparation
 {
-    public static MapNote[] Prepare(List<MapNote> notes, List<MapNote> bombs, List<PreparedSlider> arcs, List<PreparedSlider> chains, bool chainsBeforeArcs = false)
+    public static MapNote[] Prepare(List<MapNote> notes, List<MapNote> bombs, List<PreparedSlider> arcs, List<PreparedSlider> chains, bool chainsBeforeArcs = false,bool prepareOrientation=true)
     {
-        NoteOrientation.Prepare(notes);
+        if(prepareOrientation)NoteOrientation.Prepare(notes);
         var sources=new List<object>[] {notes.Cast<object>().ToList(),bombs.Cast<object>().ToList(),arcs.Cast<object>().ToList(),chains.Cast<object>().ToList()};
         if(chainsBeforeArcs){var source=sources[2];sources[2]=sources[3];sources[3]=source;}
         var orderedNotes=new LinkedList<MapNote>();LinkedListNode<MapNote>? lastNote=null;

@@ -9,7 +9,7 @@ static class MenuDataChecks
 {
     public static object Run(OriginalOracle oracle,string gameRoot,string mapsRoot,string manifest)
     {
-        var results=new List<object>();int failed=0;
+        var results=new List<object>();int failed=0,selectiveCases=0;
         foreach(var row in JObject.Parse(File.ReadAllText(manifest))["maps"]!)
         {
             string folder=Path.Combine(mapsRoot,(string)row["Folder"]!);
@@ -40,12 +40,28 @@ static class MenuDataChecks
             }
             if(snapshot.LegacyHistoryStatus!="not-requested"||snapshot.OwnHistoryStatus!="not-requested"||snapshot.DeathMarkers.Length!=0)
                 differences["history"]="Unexpected history access in map-only fixture";
+            foreach(var features in new[]{AnalysisFeatures.Average,AnalysisFeatures.Peak,AnalysisFeatures.Median,AnalysisFeatures.FirstNotes,
+                AnalysisFeatures.Density,AnalysisFeatures.Squats,AnalysisFeatures.ImportedDeaths,AnalysisFeatures.OwnDeaths,
+                AnalysisFeatures.Average|AnalysisFeatures.Peak|AnalysisFeatures.Median,AnalysisFeatures.All&~AnalysisFeatures.Reference})
+            {
+                var partial=SelectedMapAnalyzer.Load(new SelectedMapRequest(request.LevelId,request.Characteristic,request.Difficulty,rank,request.BeatmapFile,features:features));
+                bool Has(AnalysisFeatures feature)=>(features&feature)!=0;
+                bool equal=(!Has(AnalysisFeatures.Average)||partial.Corrected.LeftAverage==snapshot.Corrected.LeftAverage&&partial.Corrected.RightAverage==snapshot.Corrected.RightAverage)
+                    &&(!Has(AnalysisFeatures.Peak)||partial.Corrected.LeftPeak==snapshot.Corrected.LeftPeak&&partial.Corrected.RightPeak==snapshot.Corrected.RightPeak)
+                    &&(!Has(AnalysisFeatures.Median)||partial.MedianLeft==snapshot.MedianLeft&&partial.MedianRight==snapshot.MedianRight)
+                    &&(!Has(AnalysisFeatures.Density)||JToken.DeepEquals(JToken.FromObject(partial.Corrected.Colors),JToken.FromObject(snapshot.Corrected.Colors)))
+                    &&(!Has(AnalysisFeatures.FirstNotes)||JToken.DeepEquals(JToken.FromObject(new{partial.FirstLeftNote,partial.FirstRightNote}),JToken.FromObject(new{snapshot.FirstLeftNote,snapshot.FirstRightNote})))
+                    &&(!Has(AnalysisFeatures.Squats)||partial.SquatCount==snapshot.SquatCount)
+                    &&(!Has(AnalysisFeatures.OwnDeaths)||partial.BeatmapSha256==snapshot.BeatmapSha256);
+                if(!equal)differences["selective."+features]="Selective visible outputs differ from full analysis";
+                selectiveCases++;
+            }
             if(differences.Count>0)failed++;
             results.Add(new {map=Path.GetFileName(folder),test.Characteristic,test.Difficulty,snapshot.SquatCount,status=differences.Count==0?"pass":"mismatch",differences});
         }
         var orientation=OrientationChecks.Run(gameRoot,out int orientationFailures);
         if(orientationFailures>0)failed++;
         return new {schemaVersion=1,scope="menu data pipeline; map outputs compared with original IL; history tested separately on synthetic fixtures",
-            cases=results.Count,failed,gameStarted=false,userHistoryRead=false,results,orientation};
+            cases=results.Count,selectiveCases,failed,gameStarted=false,userHistoryRead=false,results,orientation};
     }
 }

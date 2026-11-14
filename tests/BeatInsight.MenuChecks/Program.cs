@@ -113,6 +113,50 @@ Check(analysis.LegacyHistoryStatus=="available"&&analysis.OwnHistoryStatus=="ava
 Check(analysis.Corrected.HistoryIndices.Length==0&&analysis.Compatible.HistoryIndices.Length==1,"Legacy history is not reindexed against corrected notes");
 Check(analysis.DeathMarkers.Any(m=>m.ColorHex=="#FFFF00"&&m.SongTimeSeconds==1.25)&&analysis.DeathMarkers.Any(m=>m.ColorHex=="#FF0000"&&m.PositionStatus=="completion-song-time-estimate"),"Legacy and own markers retain positions, colors and precision");
 Check(File.ReadAllText(legacyFile)==legacyBefore&&File.ReadAllText(ownFile)==ownBefore,"Selection analysis never writes history");
+for(int mask=0;mask<256;mask++)
+{
+    var features=(AnalysisFeatures)mask;
+    bool Has(AnalysisFeatures f)=>(features&f)!=0;
+    var partial=SelectedMapAnalyzer.Load(new SelectedMapRequest("custom_level_TEST","Standard","Expert",3,expert,legacyFile,ownFile,features:features));
+    bool bins=Has(AnalysisFeatures.Average|AnalysisFeatures.Peak|AnalysisFeatures.Median);
+    bool same=partial.Features==features&&partial.Corrected.LeftAverage==(Has(AnalysisFeatures.Average)?analysis.Corrected.LeftAverage:0)
+        &&partial.Corrected.RightAverage==(Has(AnalysisFeatures.Average)?analysis.Corrected.RightAverage:0)
+        &&partial.Corrected.LeftPeak==(Has(AnalysisFeatures.Peak)?analysis.Corrected.LeftPeak:0)
+        &&partial.Corrected.RightPeak==(Has(AnalysisFeatures.Peak)?analysis.Corrected.RightPeak:0)
+        &&partial.MedianLeft==(Has(AnalysisFeatures.Median)?analysis.MedianLeft:0)
+        &&partial.MedianRight==(Has(AnalysisFeatures.Median)?analysis.MedianRight:0)
+        &&(bins?partial.Corrected.LeftBins.SequenceEqual(analysis.Corrected.LeftBins):partial.Corrected.LeftBins.Length==0)
+        &&(Has(AnalysisFeatures.Density)?partial.Corrected.Segments.SequenceEqual(analysis.Corrected.Segments)&&
+            JsonConvert.SerializeObject(partial.Corrected.Colors)==JsonConvert.SerializeObject(analysis.Corrected.Colors):partial.Corrected.Colors.Length==0&&partial.Corrected.Segments.Length==0)
+        &&partial.SquatCount==(Has(AnalysisFeatures.Squats)?analysis.SquatCount:null)
+        &&(Has(AnalysisFeatures.FirstNotes)?partial.FirstLeftNote?.CutDirectionAngleOffset==analysis.FirstLeftNote?.CutDirectionAngleOffset&&partial.FirstRightNote?.Time==analysis.FirstRightNote?.Time:partial.FirstLeftNote==null&&partial.FirstRightNote==null)
+        &&partial.LegacyHistoryStatus==(Has(AnalysisFeatures.ImportedDeaths)?analysis.LegacyHistoryStatus:"not-requested")
+        &&partial.OwnHistoryStatus==(Has(AnalysisFeatures.OwnDeaths)?analysis.OwnHistoryStatus:"not-requested")
+        &&partial.DeathMarkers.Length==((Has(AnalysisFeatures.ImportedDeaths)?1:0)+(Has(AnalysisFeatures.OwnDeaths)?1:0))
+        &&partial.BeatmapSha256==(Has(AnalysisFeatures.OwnDeaths)?analysis.BeatmapSha256:"")
+        &&partial.Compatible.LeftBins.Length==0;
+    Check(same,"Every selective calculation matches enabled full results and omits hidden results: "+mask);
+}
+var disabled=SelectedMapAnalyzer.Load(new SelectedMapRequest("custom_level_TEST","Standard","Expert",3,Path.Combine(scratch,"does-not-exist.dat"),features:AnalysisFeatures.None));
+Check(disabled.Features==AnalysisFeatures.None&&disabled.DeathMarkers.Length==0,"All hidden performs no map or history IO");
+string validExpert=File.ReadAllText(expert);
+try
+{
+    File.WriteAllText(expert,"""{"version":"3.3.0","colorNotes":[{"b":"invalid-note-time"}],"obstacles":[]}""");
+    var squatOnly=SelectedMapAnalyzer.Load(new SelectedMapRequest("custom_level_TEST","Standard","Expert",3,expert,features:AnalysisFeatures.Squats));
+    var ownOnlyAnalysis=SelectedMapAnalyzer.Load(new SelectedMapRequest("custom_level_TEST","Standard","Expert",3,expert,ownHistoryFile:ownFile,features:AnalysisFeatures.OwnDeaths));
+    Check(squatOnly.SquatCount==0&&squatOnly.SquatError==null&&ownOnlyAnalysis.OwnHistoryStatus=="available",
+        "Squat-only and own-history-only requests never prepare or analyze notes");
+}
+finally{File.WriteAllText(expert,validExpert);}
+var damagedAngle=JObject.Parse(validExpert);damagedAngle["colorNotes"]![0]!["a"]="invalid-hidden-angle";
+try
+{
+    File.WriteAllText(expert,damagedAngle.ToString());
+    var averagesOnly=SelectedMapAnalyzer.Load(new SelectedMapRequest("custom_level_TEST","Standard","Expert",3,expert,features:AnalysisFeatures.Average));
+    Check(averagesOnly.Corrected.LeftAverage==analysis.Corrected.LeftAverage,"Hidden first-note orientation is neither read nor calculated");
+}
+finally{File.WriteAllText(expert,validExpert);}
 var other=SelectedMapAnalyzer.Load(new SelectedMapRequest("custom_level_TEST","Standard","Hard",2,hard,legacyFile,ownFile));
 Check(other.MapKey!=key&&!other.HasLeftNote&&other.HasRightNote&&other.DeathMarkers.Length==0&&other.LegacyHistoryStatus=="key-absent","Difficulty change does not reuse another difficulty's data/history");
 File.WriteAllText(legacyFile,"{");
@@ -141,6 +185,46 @@ DrawColor leftColor=new DrawColor(.8f,.1f,.2f),rightColor=new DrawColor(.1f,.6f,
 var readyPresentation=SelectedMapPresentation.Create(analysis,leftColor,rightColor);
 Check(readyPresentation.Average=="2.0 / 1.0"&&readyPresentation.Peak=="2 / 1"&&readyPresentation.Median=="2 / 1","AVG displays tenths; PEAK/MEDIAN preserve their format and hand order");
 Check(readyPresentation.Squats=="0","A real zero squat count is not an error dash");
+var hiddenAverage=MenuDrawing.Panel(readyPresentation);
+new MenuVisibility {Average=false}.Apply(hiddenAverage);
+Check(hiddenAverage.Labels.All(l=>l.Group!=DrawGroup.Average)&&hiddenAverage.Triangles.All(t=>t.Group!=DrawGroup.Average)&&
+    hiddenAverage.Labels.Any(l=>l.Group==DrawGroup.Peak)&&hiddenAverage.Triangles.Any(t=>t.Group==DrawGroup.FirstNotes),
+    "Hiding average removes its icon/text while preserving other metrics and notes");
+var hiddenAll=new MenuVisibility {Average=false,Peak=false,Median=false,Squats=false,FirstNotes=false,Density=false,ImportedDeaths=false,OwnDeaths=false};
+var emptyPanel=MenuDrawing.Panel(readyPresentation);hiddenAll.Apply(emptyPanel);
+Check(!hiddenAll.HasStatistics&&!hiddenAll.HasTimeline&&emptyPanel.Labels.Count==0&&emptyPanel.Triangles.Count==0,
+    "Disabling all statistics leaves no geometry, labels or row reservation");
+var statisticOrder=new[]{DrawGroup.Average,DrawGroup.Peak,DrawGroup.Median,DrawGroup.Squats,DrawGroup.FirstNotes};
+for(int mask=0;mask<32;mask++)
+{
+    var selectedVisibility=new MenuVisibility {Average=(mask&1)!=0,Peak=(mask&2)!=0,Median=(mask&4)!=0,Squats=(mask&8)!=0,FirstNotes=(mask&16)!=0};
+    var columns=new StatisticsLayout(selectedVisibility,MenuDrawing.Panel(readyPresentation)).Columns;
+    var expectedGroups=statisticOrder.Where(selectedVisibility.Includes).ToArray();
+    bool valid=columns.Select(c=>c.Group).SequenceEqual(expectedGroups);
+    if(columns.Count>0)
+    {
+        if(columns.Count==1)valid&=Math.Abs(columns[0].Left+columns[0].Right-100)<.001f;
+        else valid&=Math.Abs(columns[0].Left)<.001f&&Math.Abs(columns[^1].Right-100)<.001f;
+        for(int i=0;i<columns.Count;i++)valid&=columns[i].Right>columns[i].Left&&(i==0||columns[i].Left>=columns[i-1].Right-.001f);
+        for(int i=2;i<columns.Count;i++)valid&=Math.Abs((columns[i].Left-columns[i-1].Right)-(columns[1].Left-columns[0].Right))<.001f;
+    }
+    Check(valid,"Visible metric content aligns to both edges with equal gaps, or centers a single metric: "+mask);
+}
+var asymmetric=new Drawing();
+asymmetric.Labels.Add(new DrawLabel {Group=DrawGroup.Squats,X=70,Width=5});
+var centered=new StatisticsLayout(new MenuVisibility(),asymmetric,new StatisticsBounds(DrawGroup.Squats,65,68));
+Check(centered.Columns.Single().Left==45&&centered.Columns.Single().Right==55&&centered.Offset(DrawGroup.Squats)==-20,
+    "Single metric centers its visible icon and text bounds rather than the original column");
+var peakVisibility=new MenuVisibility {Average=false,Median=false,Squats=false,FirstNotes=false};
+var peakDrawing=MenuDrawing.Panel(readyPresentation);peakVisibility.Apply(peakDrawing);
+var peakLayout=new StatisticsLayout(peakVisibility,peakDrawing);
+float oldPeakX=peakDrawing.Labels.Single().X,oldPeakWidth=peakDrawing.Labels.Single().Width;
+float oldTriangleX=peakDrawing.Triangles[0].A.X;
+peakLayout.Apply(peakDrawing);
+Check(Math.Abs(peakLayout.Columns.Single().Left+peakLayout.Columns.Single().Right-100)<.001f&&
+    Math.Abs(peakDrawing.Labels.Single().X-oldPeakX-peakLayout.Offset(DrawGroup.Peak))<.001f&&
+    Math.Abs(peakDrawing.Triangles[0].A.X-oldTriangleX-peakLayout.Offset(DrawGroup.Peak))<.001f&&
+    peakDrawing.Labels.Single().Width==oldPeakWidth,"A single metric centers; icon and value translate together without stretching");
 var errorPresentation=SelectedMapPresentation.Create(null,leftColor,rightColor);
 Check(new[]{errorPresentation.Average,errorPresentation.Peak,errorPresentation.Median,errorPresentation.Squats}.All(v=>v=="—")&&errorPresentation.Left==null&&errorPresentation.Right==null,"Unavailable/error presentation consists of dashes, not fake zeros or cubes");
 var dot=FirstNoteVisual.From(new MapNote {Direction=8,CutDirectionAngleOffset=23},rightColor)!;
@@ -171,6 +255,13 @@ var graphFixture=new MenuRenderData {Duration=120,Colors=Enumerable.Range(0,90).
     new(){Source="legacy",NormalizedPosition=.5,SongTimeSeconds=60},new(){Source="beatinsight",NormalizedPosition=.5,SongTimeSeconds=60},
     new(){Source="legacy",NormalizedPosition=null,SongTimeSeconds=null}]};
 var graphDrawing=MenuDrawing.Graph(graphFixture);
+var markersWithoutDensity=MenuDrawing.CompactGraph(new MenuRenderData {Duration=graphFixture.Duration,Markers=graphFixture.Markers},1);
+Check(markersWithoutDensity.Triangles.Count==8&&markersWithoutDensity.Labels.Count==0,
+    "History markers render without calculating hidden density or showing a spurious error dash");
+var ownOnly=MenuDrawing.CompactGraph(graphFixture,1);
+new MenuVisibility {Density=false,ImportedDeaths=false}.Apply(ownOnly);
+Check(ownOnly.Triangles.Count==4&&ownOnly.Triangles.All(t=>t.Group==DrawGroup.OwnDeaths&&t.Color.R==1&&t.Color.G==0),
+    "Density/imported marker toggles independently preserve red own markers");
 var reverseSources=new MenuRenderData {Duration=graphFixture.Duration,Colors=graphFixture.Colors,Markers=graphFixture.Markers.Reverse().ToArray()};
 Check(MenuDrawing.CompactGraph(reverseSources,1).Triangles.TakeLast(4).All(t=>t.Color.R==1&&t.Color.G==0&&t.Color.B==0),
     "Own red crosses draw last even if imported markers arrive after own records");

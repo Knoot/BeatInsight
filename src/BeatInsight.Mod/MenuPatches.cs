@@ -3,6 +3,13 @@ using HarmonyLib;
 
 namespace BeatInsight.Mod;
 
+[HarmonyPatch(typeof(MainFlowCoordinator),"DidActivate")]
+internal static class SettingsMenuPatch
+{
+    [HarmonyPostfix]
+    static void Postfix()=>MenuSettings.EnsureRegistered();
+}
+
 [HarmonyPatch(typeof(StandardLevelDetailViewController),"DidActivate")]
 internal static class MenuActivatePatch
 {
