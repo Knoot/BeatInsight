@@ -17,9 +17,9 @@ namespace BeatInsight.WallAlert
         {
             obstacle.beat=beat; obstacle.endBeat=endBeat; obstacle.duration=duration;
             obstacle.lineIndex=lane; obstacle.lineLayer=layer; obstacle.width=width; obstacle.height=height;
-            if(!global::WallAlert.Services.WallAnalyzer.ApplyLaneCoverage(laneEnds, obstacle)
-                || !global::WallAlert.Services.WallAnalyzer.IsUpperCrouchWallPart(obstacle))return false;
-            bool show=beat>lastBeat+global::WallAlert.Services.WallAnalyzer.CrouchWallSequenceToleranceBeats;
+            if(!WallAnalyzer.ApplyLaneCoverage(laneEnds, obstacle)
+                || !WallAnalyzer.IsUpperCrouchWallPart(obstacle))return false;
+            bool show=beat>lastBeat+WallAnalyzer.CrouchWallSequenceToleranceBeats;
             lastBeat=beat;
             return show;
         }

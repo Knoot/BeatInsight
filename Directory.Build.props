@@ -1,7 +1,6 @@
 <Project>
   <PropertyGroup>
     <GameRoot Condition="'$(GameRoot)' == ''">$(BEATINSIGHT_GAME_ROOT)</GameRoot>
-    <WallAlertSource Condition="'$(WallAlertSource)' == ''">$(BEATINSIGHT_WALLALERT_SOURCE)</WallAlertSource>
     <CecilPath Condition="'$(CecilPath)' == ''">$(BEATINSIGHT_CECIL_PATH)</CecilPath>
     <NuGetPackageRoot Condition="'$(NuGetPackageRoot)' == '' and '$(NUGET_PACKAGES)' != ''">$(NUGET_PACKAGES)/</NuGetPackageRoot>
   </PropertyGroup>

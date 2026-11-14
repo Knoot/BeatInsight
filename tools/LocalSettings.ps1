@@ -1,7 +1,7 @@
 # Shared path resolution. Explicit arguments take priority over environment and local settings.
 function Get-BeatInsightSetting([string]$Name, [string]$ExplicitValue, [string]$ResolvedGameRoot) {
     if ($ExplicitValue) { return $ExplicitValue }
-    $environmentName = @{ GameRoot='BEATINSIGHT_GAME_ROOT'; MapsRoot='BEATINSIGHT_MAPS_ROOT'; WallAlertSource='BEATINSIGHT_WALLALERT_SOURCE'; CecilPath='BEATINSIGHT_CECIL_PATH'; NuGetPackageRoot='NUGET_PACKAGES'; ReferenceAnalysisAssembly='BEATINSIGHT_REFERENCE_ANALYSIS_ASSEMBLY'; ReferencePreviewAssembly='BEATINSIGHT_REFERENCE_PREVIEW_ASSEMBLY'; ReferenceUtilityAssembly='BEATINSIGHT_REFERENCE_UTILITY_ASSEMBLY' }[$Name]
+    $environmentName = @{ GameRoot='BEATINSIGHT_GAME_ROOT'; MapsRoot='BEATINSIGHT_MAPS_ROOT'; CecilPath='BEATINSIGHT_CECIL_PATH'; NuGetPackageRoot='NUGET_PACKAGES'; ReferenceAnalysisAssembly='BEATINSIGHT_REFERENCE_ANALYSIS_ASSEMBLY'; ReferencePreviewAssembly='BEATINSIGHT_REFERENCE_PREVIEW_ASSEMBLY'; ReferenceUtilityAssembly='BEATINSIGHT_REFERENCE_UTILITY_ASSEMBLY' }[$Name]
     if ($environmentName) {
         $value = [Environment]::GetEnvironmentVariable($environmentName)
         if ($value) { return $value }

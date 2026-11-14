@@ -1,5 +1,5 @@
 // Only the game data shape used by WallAnalyzer. No Unity assembly is loaded by the CLI.
-#pragma warning disable CS0649 // Shape needed to compile the unchanged reference source.
+#pragma warning disable CS0649 // Runtime-independent obstacle shape.
 internal sealed class ObstacleData
 {
     public int width, height, lineLayer, lineIndex;
@@ -11,13 +11,13 @@ namespace BeatInsight.WallAlert
 {
     public static class WallAlertAdapter
     {
-        public static int Count(string json,float bpm)=>global::WallAlert.Services.WallAnalyzer.AnalyzeCrouchWalls(json,bpm).SquatCount;
+        public static int Count(string json,float bpm)=>WallAnalyzer.AnalyzeCrouchWalls(json,bpm).SquatCount;
         public static object Analyze(string json, float bpm)
         {
-            var result = global::WallAlert.Services.WallAnalyzer.AnalyzeCrouchWalls(json, bpm);
+            var result = WallAnalyzer.AnalyzeCrouchWalls(json, bpm);
             return new
             {
-                implementation = "linked-unmodified-WallAlert-source",
+                implementation = "built-in-wall-analyzer",
                 result.BeatmapFormatVersion, result.SquatCount, result.Timecodes
             };
         }
