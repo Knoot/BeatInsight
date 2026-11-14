@@ -297,4 +297,35 @@ var unusedBadBpm=LoadSynthetic(JObject.Parse("""{"_version":"2.0.0","_notes":[],
 Check(unusedBadBpm.Input.Notes.Length==0,"Invalid lighting-only BPM does not reject a map without gameplay objects");
 var lateBadBpm=LoadSynthetic(JObject.Parse("""{"_version":"2.6.0","_notes":[{"_time":2,"_type":0,"_cutDirection":1}],"_events":[{"_time":20,"_type":100,"_value":0,"_floatValue":0}]}"""));
 Check(lateBadBpm.Input.Notes.Single().Time==1,"Unused BPM after the final object does not change valid note times");
+var v4Note=JObject.Parse("""{"version":"4.1.0","colorNotes":[{"b":1,"i":0}],"colorNotesData":[{"x":0,"y":0,"c":0,"d":1}]}""");
+var v4Audio=JObject.Parse("""{"songFrequency":44100,"bpmData":[{"si":0,"ei":88200,"sb":0,"eb":4}]}""");
+var instantAudio=JObject.Parse("""{"songFrequency":44100,"bpmData":[{"si":0,"ei":0,"sb":0,"eb":4}]}""");
+Check(LoadSynthetic(v4Note,instantAudio).Input.Notes.Single().Time==0,"A zero-sample v4 range uses the native instantaneous timeline");
+var afterUnusedRange=(JObject)v4Note.DeepClone();afterUnusedRange["colorNotes"]![0]!["b"]=5;
+var unusedZeroBeat=JObject.Parse("""{"songFrequency":44100,"bpmData":[{"si":0,"ei":88200,"sb":0,"eb":0},{"si":88200,"ei":176400,"sb":4,"eb":8}]}""");
+Check(LoadSynthetic(afterUnusedRange,unusedZeroBeat).Input.Notes.Single().Time==2.5f,"A v4 object's sample-anchored range does not inherit an unused earlier range's invalid tempo");
+var emptyV4=JObject.Parse("{\"version\":\"4.1.0\"}");
+Check(LoadSynthetic(emptyV4,JObject.Parse("{\"songFrequency\":44100,\"bpmData\":[]}")).Input.Notes.Length==0,"Empty v4 gameplay does not invent a timing range");
+foreach(var audioData in new[]{JObject.Parse("{\"songFrequency\":44100,\"bpmData\":[]}"),JObject.Parse("{\"songFrequency\":44100}")})
+{
+    bool rejected=false;try{LoadSynthetic(v4Note,audioData);}catch(NotSupportedException){rejected=true;}
+    Check(rejected,"Missing v4 timing for a gameplay object is explicitly unsupported");
+}
+bool missingAudioRejected=false;try{LoadSynthetic(v4Note);}catch(NotSupportedException){missingAudioRejected=true;}
+Check(missingAudioRejected,"A missing AudioData file is a specific unsupported state rather than a generic file exception");
+foreach(int index in new[]{-1,99})
+{
+    var invalid=(JObject)v4Note.DeepClone();invalid["colorNotes"]![0]!["i"]=index;
+    bool rejected=false;try{LoadSynthetic(invalid,v4Audio);}catch(NotSupportedException){rejected=true;}
+    Check(rejected,"Invalid v4 data references are explicitly unsupported: "+index);
+}
+var noV4Data=(JObject)v4Note.DeepClone();noV4Data.Remove("colorNotesData");
+bool noDataRejected=false;try{LoadSynthetic(noV4Data,v4Audio);}catch(NotSupportedException){noDataRejected=true;}
+Check(noDataRejected,"Referenced v4 note data cannot silently disappear");
+var defaultIndex=(JObject)v4Note.DeepClone();((JObject)defaultIndex["colorNotes"]![0]!).Remove("i");
+Check(LoadSynthetic(defaultIndex,v4Audio).Input.Notes.Single().X==0,"An omitted zero index retains native deserialization semantics");
+var implicitSample=(JObject)v4Audio.DeepClone();((JObject)implicitSample["bpmData"]![0]!).Remove("si");
+Check(LoadSynthetic(v4Note,implicitSample).Input.Notes.Single().Time==.5f,"An omitted zero sample index retains native deserialization semantics");
+var onlyOwnV4=LoadSynthetic(noV4Data,features:AnalysisFeatures.OwnDeaths);
+Check(onlyOwnV4.Input.Duration==100&&onlyOwnV4.AudioJson==null,"Hidden note/timing analysis does not read AudioData or referenced note arrays for own markers");
 Console.WriteLine($"Passed {checks} checks.");

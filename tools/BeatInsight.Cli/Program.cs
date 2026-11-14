@@ -58,7 +58,7 @@ try
     var legacyMarkers=DeathHistory.LegacyMarkers(selected,map.Input);
     var ownMarkers=historyKey==null?Array.Empty<DeathMarker>():DeathHistory.OwnMarkers(ownHistory.Records,historyKey,map.Input.Duration,mapHash);
     Console.WriteLine(JsonConvert.SerializeObject(new {
-        schemaVersion=3,profileVersion=3,profile="vanilla-neutral",test.Characteristic,test.Difficulty,test.File,map.Version,map.Features,
+        schemaVersion=3,profileVersion=4,profile="vanilla-neutral",test.Characteristic,test.Difficulty,test.File,map.Version,map.Features,
         selectionDiagnostics=mapSelection.Diagnostics,
         implementation="independent; no reference implementation DLL is loaded by this CLI",
         compatible,corrected,

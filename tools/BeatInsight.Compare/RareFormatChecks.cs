@@ -107,7 +107,7 @@ static class RareFormatChecks
             if(differences.Count>0){status="mismatch";failed++;}
             results.Add(new {fixture.Name,status,nativeInvalid,nativeError,differences});
         }
-        return new {schemaVersion=1,profileVersion=3,cases=cases.Count,libraryCases,failed,rejected,gameStarted=false,userHistoryRead=false,
+        return new {schemaVersion=1,profileVersion=4,cases=cases.Count,libraryCases,failed,rejected,gameStarted=false,userHistoryRead=false,
             scope="synthetic v2 sliders, version gates and legacy BPM preprocessing against installed loader and reference IL",results};
     }
 }

@@ -10,6 +10,12 @@ try
     if(args.Length == 0) throw new ArgumentException("Supply gameRoot as the first argument.");
     string gameRoot = Path.GetFullPath(args[0]);
     var oracle = new OriginalOracle(gameRoot);
+    if(args.Length==3&&args[1]=="--check-audio-data")
+    {
+        var report=AudioDataChecks.Run(oracle,gameRoot,args[2]);
+        File.WriteAllText(args[2],JsonConvert.SerializeObject(report,Formatting.Indented));
+        return JObject.FromObject(report)["failed"]!.Value<int>()==0?0:2;
+    }
     if((args.Length==3||args.Length==4)&&args[1]=="--check-rare-formats")
     {
         var report=RareFormatChecks.Run(oracle,gameRoot,args[2],args.Length==4?args[3]:null);
@@ -111,7 +117,7 @@ static int RunCase(OriginalOracle oracle,string gameRoot,string requestPath,stri
             File.WriteAllText(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(resultPath))!,artifact), JsonConvert.SerializeObject(new { request, input=map.Input, oracleInput=oracle.LastPrepared, original, compatible=own, corrected, differences }, Formatting.Indented));
         }
         record = new {
-            schemaVersion=3,profileVersion=3, status=differences.Count==0?"pass":"mismatch", profile="vanilla-neutral", request,
+            schemaVersion=3,profileVersion=4, status=differences.Count==0?"pass":"mismatch", profile="vanilla-neutral", request,
             mapVersion=map.Version, features=map.Features,
             mapSha256=Comparison.Hash(map.Json), audioDataSha256=map.AudioJson==null?null:Comparison.Hash(map.AudioJson),
             duration=map.Input.Duration, originalHash=oracle.LevelHash, previewHash=oracle.PreviewHash,
@@ -126,8 +132,8 @@ static int RunCase(OriginalOracle oracle,string gameRoot,string requestPath,stri
         };
         exitCode=differences.Count==0?0:2;
     }
-    catch (NotSupportedException e) {record=new {schemaVersion=3,profileVersion=3,status="unsupported",request,error=e.Message};exitCode=3;}
-    catch (Exception e) {record=new {schemaVersion=3,profileVersion=3,status="error",request,error=e.ToString()};exitCode=4;}
+    catch (NotSupportedException e) {record=new {schemaVersion=3,profileVersion=4,status="unsupported",request,error=e.Message};exitCode=3;}
+    catch (Exception e) {record=new {schemaVersion=3,profileVersion=4,status="error",request,error=e.ToString()};exitCode=4;}
     File.WriteAllText(resultPath,JsonConvert.SerializeObject(record,Formatting.Indented));
     Console.WriteLine(JsonConvert.SerializeObject(new {result=Path.GetFileName(resultPath),exitCode}));
     return exitCode;
