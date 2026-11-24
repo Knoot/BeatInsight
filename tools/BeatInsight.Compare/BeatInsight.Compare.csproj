@@ -8,6 +8,7 @@
     <ProjectReference Include="../../src/BeatInsight.Formats/BeatInsight.Formats.csproj" />
     <ProjectReference Include="../../src/BeatInsight.WallAlert/BeatInsight.WallAlert.csproj" />
     <Reference Include="Mono.Cecil"><HintPath>$(CecilPath)</HintPath></Reference>
+    <Reference Include="DataModels"><HintPath>$(GameRoot)\Beat Saber_Data\Managed\DataModels.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="BeatmapCore"><HintPath>$(GameRoot)\Beat Saber_Data\Managed\BeatmapCore.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameRoot)\Beat Saber_Data\Managed\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>

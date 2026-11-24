@@ -18,6 +18,7 @@ public class PluginConfig:INotifyPropertyChanged
     [UIValue("squat-warnings")] public virtual bool SquatWarningsEnabled {get;set;}=true;
     [UIValue("squat-warning-lead")] public virtual float SquatWarningLeadTime {get;set;}=2f;
     [UIValue("squat-warning-circles")] public virtual bool SquatWarningCircles {get;set;}
+    public virtual bool DiagnosticLogging {get;set;}=true;
     public event PropertyChangedEventHandler? PropertyChanged;
     public virtual void RaisePropertyChanged(string name)=>PropertyChanged?.Invoke(this,new PropertyChangedEventArgs(name));
     public virtual void Changed()=>MenuSettings.ConfigChanged();

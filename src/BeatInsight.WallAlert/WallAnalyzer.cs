@@ -15,10 +15,10 @@ namespace BeatInsight.WallAlert
             return obstacle != null
                 && obstacle.width > 0
                 && obstacle.height > 0
-                && OccupiesUpperRows((int)obstacle.lineLayer, obstacle.height);
+                && OccupiesUpperRows(LoadedLayer((int)obstacle.lineLayer), obstacle.height);
         }
 
-        public static WallAnalysis AnalyzeCrouchWalls(string beatmapJson, float beatsPerMinute)
+        public static WallAnalysis AnalyzeCrouchWalls(string beatmapJson, float beatsPerMinute,bool preserveExtendedLayers=false)
         {
             if (string.IsNullOrWhiteSpace(beatmapJson))
             {
@@ -27,7 +27,7 @@ namespace BeatInsight.WallAlert
 
             var root = JObject.Parse(beatmapJson);
             var beatmapFormatVersion = ReadBeatmapFormatVersion(root);
-            var parts = ReadCrouchWallParts(root);
+            var parts = ReadCrouchWallParts(root,preserveExtendedLayers);
             if (parts.Count == 0)
             {
                 return new WallAnalysis(beatmapFormatVersion, Enumerable.Empty<string>());
@@ -38,7 +38,7 @@ namespace BeatInsight.WallAlert
             return new WallAnalysis(beatmapFormatVersion, crouchWallBeats.Select(beat => FormatBeatTime(beat, beatsPerMinute)));
         }
 
-        private static List<CrouchWallPart> ReadCrouchWallParts(JObject root)
+        private static List<CrouchWallPart> ReadCrouchWallParts(JObject root,bool preserveExtendedLayers)
         {
             var obstacles = root["_obstacles"] ?? root["obstacles"];
             if (obstacles == null)
@@ -52,21 +52,21 @@ namespace BeatInsight.WallAlert
             {
                 if (obstacleData != null)
                 {
-                    var index = obstacle["i"]?.Value<int?>() ?? -1;
+                    var index = obstacle["i"]?.Value<int?>() ?? 0;
                     if (index < 0 || index >= obstacleData.Count)
                     {
                         continue;
                     }
 
                     var data = obstacleData[index];
-                    if (IsV3OrV4CrouchWall(data))
+                    if (IsV3OrV4CrouchWall(data,preserveExtendedLayers))
                     {
-                        parts.Add(ReadV4CrouchWallPart(obstacle, data));
+                        parts.Add(ReadV4CrouchWallPart(obstacle, data,preserveExtendedLayers));
                     }
                 }
-                else if (IsCrouchWall(obstacle))
+                else if (IsCrouchWall(obstacle,preserveExtendedLayers))
                 {
-                    parts.Add(ReadCrouchWallPart(obstacle));
+                    parts.Add(ReadCrouchWallPart(obstacle,preserveExtendedLayers));
                 }
             }
 
@@ -85,14 +85,14 @@ namespace BeatInsight.WallAlert
             return int.TryParse(major, out _) ? $"v{major}" : version;
         }
 
-        private static bool IsCrouchWall(JToken obstacle)
+        private static bool IsCrouchWall(JToken obstacle,bool preserveExtendedLayers)
         {
             if (obstacle["_type"] != null)
             {
                 return IsV2CrouchWall(obstacle);
             }
 
-            return IsV3OrV4CrouchWall(obstacle);
+            return IsV3OrV4CrouchWall(obstacle,preserveExtendedLayers);
         }
 
         private static bool IsV2CrouchWall(JToken obstacle)
@@ -104,9 +104,9 @@ namespace BeatInsight.WallAlert
             return type == topObstacleType && width > 0;
         }
 
-        private static bool IsV3OrV4CrouchWall(JToken obstacle)
+        private static bool IsV3OrV4CrouchWall(JToken obstacle,bool preserveExtendedLayers)
         {
-            var layer = obstacle["y"]?.Value<int?>() ?? 0;
+            var layer = JsonLayer(obstacle["y"]?.Value<int?>() ?? 0,preserveExtendedLayers);
             var width = obstacle["w"]?.Value<int?>() ?? 1;
             var height = obstacle["h"]?.Value<int?>() ?? 0;
             if (width <= 0)
@@ -122,7 +122,7 @@ namespace BeatInsight.WallAlert
             return width > 0 && height > 0 && OccupiesUpperRows(layer, height);
         }
 
-        private static CrouchWallPart ReadCrouchWallPart(JToken obstacle)
+        private static CrouchWallPart ReadCrouchWallPart(JToken obstacle,bool preserveExtendedLayers)
         {
             var beat = ReadFloat(obstacle, "_time", "b");
             var duration = ReadFloat(obstacle, "_duration", "d");
@@ -130,20 +130,20 @@ namespace BeatInsight.WallAlert
             var width = obstacle["_width"]?.Value<int?>() ?? obstacle["w"]?.Value<int?>() ?? 1;
             var layer = obstacle["_type"] != null
                 ? 1
-                : obstacle["y"]?.Value<int?>() ?? 0;
+                : JsonLayer(obstacle["y"]?.Value<int?>() ?? 0,preserveExtendedLayers);
             var height = obstacle["_type"] != null
                 ? 3
                 : ReadHeight(obstacle, layer);
             return new CrouchWallPart(beat, beat + Math.Max(0f, duration), lineIndex, width, layer, height);
         }
 
-        private static CrouchWallPart ReadV4CrouchWallPart(JToken obstacle, JToken data)
+        private static CrouchWallPart ReadV4CrouchWallPart(JToken obstacle, JToken data,bool preserveExtendedLayers)
         {
             var beat = ReadFloat(obstacle, "_time", "b");
             var duration = data["d"]?.Value<float?>() ?? 0f;
             var lineIndex = data["x"]?.Value<int?>() ?? 0;
             var width = data["w"]?.Value<int?>() ?? 1;
-            var layer = data["y"]?.Value<int?>() ?? 0;
+            var layer = JsonLayer(data["y"]?.Value<int?>() ?? 0,preserveExtendedLayers);
             var height = ReadHeight(data, layer);
             return new CrouchWallPart(beat, beat + Math.Max(0f, duration), lineIndex, width, layer, height);
         }
@@ -227,7 +227,7 @@ namespace BeatInsight.WallAlert
 
         public static bool IsUpperCrouchWallPart(ObstacleData obstacle)
         {
-            return IsCrouchWall(obstacle) && (int)obstacle.lineLayer > 0;
+            return IsCrouchWall(obstacle) && LoadedLayer((int)obstacle.lineLayer) > 0;
         }
 
         private static bool HasCrouchCenterCoverage(IEnumerable<CrouchWallPart> parts, float beat)
@@ -257,6 +257,12 @@ namespace BeatInsight.WallAlert
 
             return field[1, 1] && field[1, 2] && field[2, 1] && field[2, 2];
         }
+
+        // The ordinary spawn path maps every loaded enum other than 0/1 to Top.
+        // The JSON converter normally maps out-of-range values to Base; an
+        // installed conversion postfix may preserve them before the spawn path.
+        private static int LoadedLayer(int layer)=>layer==0?0:layer==1?1:2;
+        private static int JsonLayer(int layer,bool preserve)=>layer>=0&&layer<=2?layer:preserve?LoadedLayer(layer):0;
 
         private static bool OccupiesUpperRows(int layer, int height)
         {

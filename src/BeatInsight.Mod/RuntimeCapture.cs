@@ -15,6 +15,7 @@ internal static class RuntimeCapture
     {
         public StandardLevelScenesTransitionSetupDataSO Setup=null!;
         public DeathAttempt Attempt=null!;
+        public long DiagnosticId;
     }
     static Session? current;
     static Func<Session>? createSession;
@@ -22,7 +23,7 @@ internal static class RuntimeCapture
     static bool restartPending;
     static bool enabled;
     static string historyPath="";
-    static readonly Dictionary<StandardLevelGameplayManager,(Action Failure,AudioTimeSyncController Clock)> subscriptions=new();
+    static readonly Dictionary<StandardLevelGameplayManager,(Action Failure,Action ZeroEnergy,GameEnergyCounter Energy,AudioTimeSyncController Clock,long DiagnosticId)> subscriptions=new();
     static readonly object writerLock=new object();
     static Task pendingWrite=Task.CompletedTask;
     internal static event Action? HistoryWritten;
@@ -73,10 +74,11 @@ internal static class RuntimeCapture
         string mapKey=PlayHistory.Key(key.levelId,(int)key.difficulty,key.beatmapCharacteristic.serializedName);
         fingerprint=new AttemptFingerprint(mapKey);
         bool practice=setup.practiceSettings!=null;
+        RuntimeDiagnostics.BeginAttempt(mapKey,new{practice,recordDeaths=Plugin.Config.RecordDeaths,modifiers,leftHanded=playerSettings.leftHanded});
         createSession=()=> {
             var attempt=new DeathAttempt(mapKey,modifiers,practice,fingerprint?.Hash);
             if(!Plugin.Config.RecordDeaths)attempt.SuppressRecording();
-            return new Session {Setup=setup,Attempt=attempt};
+            return new Session {Setup=setup,Attempt=attempt,DiagnosticId=RuntimeDiagnostics.AttemptId};
         };
         current=createSession();
         Plugin.Log.Debug("Death capture started: "+mapKey+"; practice="+practice);
@@ -96,10 +98,10 @@ internal static class RuntimeCapture
             fingerprint.Prepare(mapKey,loaded,()=>loaded.GetBeatmapString(in key)??throw new InvalidDataException("Loaded beatmap JSON is unavailable"));
             Plugin.Log.Debug("Death fingerprint prepared: "+mapKey);
         }
-        finally{current?.Attempt.PrepareBeatmapHash(fingerprint.Hash);}
+        finally{current?.Attempt.PrepareBeatmapHash(fingerprint.Hash);RuntimeDiagnostics.Record("fingerprint",new{mapKey,sha256=fingerprint.Hash});}
     }
 
-    internal static void Attach(StandardLevelGameplayManager manager,AudioTimeSyncController clock)
+    internal static void Attach(StandardLevelGameplayManager manager,AudioTimeSyncController clock,GameEnergyCounter energy)
     {
         if(!enabled||subscriptions.ContainsKey(manager))return;
         // The game's Restart path reuses the transition setup and replaces scenes
@@ -113,12 +115,25 @@ internal static class RuntimeCapture
             if(!ReferenceEquals(current,session))return;
             try
             {
-                if(session.Attempt.CaptureFailure(clock.songTime,DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
+                bool accepted=session.Attempt.CaptureFailure(clock.songTime,DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                RuntimeDiagnostics.Record("failure.observed",new{songTime=clock.songTime,accepted},session.DiagnosticId);
+                if(accepted)
                     Plugin.Log.Info("Observed native failure at song time "+clock.songTime.ToString(System.Globalization.CultureInfo.InvariantCulture));
             }
             catch(Exception e){Plugin.Log.Error("Could not capture failure time: "+e);}
         };
-        manager.levelFailedEvent+=failure;subscriptions.Add(manager,(failure,clock));
+        Action zeroEnergy=()=> {
+            if(!ReferenceEquals(current,session))return;
+            try
+            {
+                bool accepted=session.Attempt.CaptureZeroEnergy(clock.songTime,DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                RuntimeDiagnostics.Record("energy.zero",new{songTime=clock.songTime,accepted},session.DiagnosticId);
+            }
+            catch(Exception e){Plugin.Log.Error("Could not capture zero energy time: "+e);}
+        };
+        manager.levelFailedEvent+=failure;energy.gameEnergyDidReach0Event+=zeroEnergy;
+        subscriptions.Add(manager,(failure,zeroEnergy,energy,clock,session.DiagnosticId));
+        RuntimeDiagnostics.Record("capture.attached",new{manager=RuntimeHelpers.GetHashCode(manager),hashKnown=fingerprint?.Hash!=null},session.DiagnosticId);
         Plugin.Log.Debug("Native failure observer attached.");
     }
 
@@ -131,6 +146,7 @@ internal static class RuntimeCapture
         foreach(var entry in subscriptions.Values)
             if(ReferenceEquals(entry.Clock,clock))
             {
+                RuntimeDiagnostics.Record("song.seek",new{from=clock.songTime,to=target},entry.DiagnosticId);
                 if(current.Attempt.ExcludeAfterSeek())Plugin.Log.Debug("Own history disabled for this attempt: song-seek.");
                 return;
             }
@@ -139,12 +155,13 @@ internal static class RuntimeCapture
     internal static void Detach(StandardLevelGameplayManager manager)
     {
         if(!subscriptions.TryGetValue(manager,out var action))return;
-        manager.levelFailedEvent-=action.Failure;subscriptions.Remove(manager);
+        RuntimeDiagnostics.Record("capture.detached",new{manager=RuntimeHelpers.GetHashCode(manager)},action.DiagnosticId);
+        manager.levelFailedEvent-=action.Failure;action.Energy.gameEnergyDidReach0Event-=action.ZeroEnergy;subscriptions.Remove(manager);
     }
 
     static void DetachAll()
     {
-        foreach(var pair in subscriptions)pair.Key.levelFailedEvent-=pair.Value.Failure;
+        foreach(var pair in subscriptions){RuntimeDiagnostics.Record("capture.detached",new{manager=RuntimeHelpers.GetHashCode(pair.Key)},pair.Value.DiagnosticId);pair.Key.levelFailedEvent-=pair.Value.Failure;pair.Value.Energy.gameEnergyDidReach0Event-=pair.Value.ZeroEnergy;}
         subscriptions.Clear();
     }
 
@@ -160,13 +177,17 @@ internal static class RuntimeCapture
         var outcome=results.levelEndStateType==LevelCompletionResults.LevelEndStateType.Failed?AttemptOutcome.Failed:
             results.levelEndStateType==LevelCompletionResults.LevelEndStateType.Cleared?AttemptOutcome.Cleared:AttemptOutcome.Incomplete;
         var record=session.Attempt.Complete(outcome,results.endSongTime,DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        long diagnosticId=session.DiagnosticId;
+        RuntimeDiagnostics.Record("attempt.completed",new{outcome=outcome.ToString(),endAction=results.levelEndAction.ToString(),endSongTime=results.endSongTime,
+            exclusion=session.Attempt.ExclusionReason,willWrite=record!=null,deathTime=record?.SongTimeSeconds},diagnosticId);
+        if(restartPending)RuntimeDiagnostics.RestartAttempt();
         if(record==null)
         {Plugin.Log.Debug("Own death skipped: "+session.Attempt.ExclusionReason+"; outcome="+outcome);return;}
         string path=historyPath;
         // IO has no Unity dependency and is serialized off the game thread.
         lock(writerLock)pendingWrite=pendingWrite.ContinueWith(_=> {
-            try {DeathHistoryStore.Append(path,record);Plugin.Log.Info("Recorded death ("+record.TimingSource+").");}
-            catch(Exception e){Plugin.Log.Error("Could not save BeatInsight death history: "+e);return;}
+            try {DeathHistoryStore.Append(path,record);RuntimeDiagnostics.Record("history.saved",new{record.MapKey,record.SongTimeSeconds,record.TimingSource},diagnosticId);Plugin.Log.Info("Recorded death ("+record.TimingSource+").");}
+            catch(Exception e){RuntimeDiagnostics.Record("history.write-error",new{error=e.GetType().Name,message=e.Message},diagnosticId);Plugin.Log.Error("Could not save BeatInsight death history: "+e);return;}
             try {HistoryWritten?.Invoke();}catch(Exception e){Plugin.Log.Error("History refresh notification failed: "+e);}
         },TaskScheduler.Default);
     }

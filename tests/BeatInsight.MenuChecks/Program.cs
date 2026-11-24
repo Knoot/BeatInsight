@@ -168,9 +168,12 @@ var missing=SelectedMapAnalyzer.Load(new SelectedMapRequest("custom_level_TEST",
 Check(missing.OwnHistoryStatus=="source-missing"&&!Directory.Exists(Path.GetDirectoryName(absent)),"Reading absent history creates no files/directories");
 using(var coordinator=new SelectionCoordinator<SelectedMapRequest,SelectedMapAnalysis>(SelectedMapAnalyzer.LoadAsync,Dispatch))
 {
-    var row=(JObject)info["difficultyBeatmaps"]![0]!;row["customData"]=JObject.Parse("""{"requirements":["Noodle Extensions"]}""");
+    var row=(JObject)info["difficultyBeatmaps"]![0]!;row["customData"]=JObject.Parse("""{"requirements":["Unknown Extension"]}""");
     File.WriteAllText(Path.Combine(scratch,"Info.dat"),info.ToString());await coordinator.SelectAsync(request);
     Check(coordinator.Current.Status==SelectionStatus.Unsupported&&coordinator.Current.Result==null,"Info requirements reject an unsupported map before UI publication");
+    row["customData"]=JObject.Parse("""{"requirements":["Noodle Extensions"]}""");
+    File.WriteAllText(Path.Combine(scratch,"Info.dat"),info.ToString());await coordinator.SelectAsync(request);
+    Check(coordinator.Current.Status==SelectionStatus.Ready,"Nominal Noodle subset reaches the menu publication path");
     row.Remove("customData");File.WriteAllText(Path.Combine(scratch,"Info.dat"),info.ToString());
     string saved=File.ReadAllText(expert);File.WriteAllText(expert,"{");await coordinator.SelectAsync(request);
     Check(coordinator.Current.Status==SelectionStatus.Error,"Corrupt selected JSON has explicit error status");
@@ -181,7 +184,123 @@ using(var coordinator=new SelectionCoordinator<SelectedMapRequest,SelectedMapAna
     await coordinator.SelectAsync(new SelectedMapRequest("custom_level_TEST","Standard","Expert",2,expert));
     Check(coordinator.Current.Status==SelectionStatus.Error,"Difficulty/rank disagreement cannot select wrong history");
 }
+foreach(int major in new[]{2,3})
+{
+    string isolated=Path.Combine(scratch,"independent-walls-v"+major);Directory.CreateDirectory(isolated);
+    var isolatedInfo=JObject.Parse("""{"version":"4.0.1","audio":{"bpm":120,"songDuration":12},"difficultyBeatmaps":[{"characteristic":"Standard","difficulty":"Expert","beatmapDataFilename":"map.dat","customData":{"requirements":["Noodle Extensions"]}}]}""");
+    File.WriteAllText(Path.Combine(isolated,"Info.dat"),isolatedInfo.ToString());
+    string file=Path.Combine(isolated,"map.dat"),customKey=major==2?"_customData":"customData",wallKey=major==2?"_obstacles":"obstacles";
+    var root=major==2?JObject.Parse("""{"_version":"2.6.0","_notes":[{"_time":2,"_lineIndex":0,"_lineLayer":0,"_type":0,"_cutDirection":1},{"_time":4,"_lineIndex":1,"_lineLayer":0,"_type":0,"_cutDirection":1},{"_time":6,"_lineIndex":3,"_lineLayer":1,"_type":1,"_cutDirection":0}],"_obstacles":[{"_time":2,"_duration":400,"_lineIndex":1,"_type":1,"_width":2}]}"""):
+        JObject.Parse("""{"version":"3.3.0","colorNotes":[{"b":2,"x":0,"y":0,"c":0,"d":1},{"b":4,"x":1,"y":0,"c":0,"d":1},{"b":6,"x":3,"y":1,"c":1,"d":0}],"obstacles":[{"b":2,"d":400,"x":1,"y":2,"w":2,"h":3}]}""");
+    SelectedMapAnalysis Read(AnalysisFeatures features)=>SelectedMapAnalyzer.Load(new SelectedMapRequest("independent-walls","Standard","Expert",3,file,features:features));
+    var menuFeatures=new MenuVisibility().Features;File.WriteAllText(file,root.ToString());var baseline=Read(menuFeatures);
+    foreach(string failure in new[]{"track","pitch"})
+    {
+        var changed=(JObject)root.DeepClone();changed[wallKey]![0]![customKey]=new JObject();
+        if(failure=="track")
+        {
+            changed[wallKey]![0]![customKey]![major==2?"_track":"track"]="moving-wall";
+            changed[customKey]=new JObject {[major==2?"_customEvents":"customEvents"]=new JArray(new JObject {
+                [major==2?"_time":"b"]=0,[major==2?"_type":"t"]="AnimateTrack",[major==2?"_data":"d"]=new JObject {
+                    [major==2?"_track":"track"]="moving-wall",[major==2?"_duration":"duration"]=8,
+                    [major==2?"_position":"offsetPosition"]=new JArray(new JArray(0,0,0,0),new JArray(1,0,0,1))}})};
+        }
+        else changed[wallKey]![0]![customKey]![major==2?"_localRotation":"localRotation"]=new JArray(10,0,0);
+        File.WriteAllText(file,changed.ToString());var partial=Read(menuFeatures);
+        Check(partial.Corrected.LeftAverage==baseline.Corrected.LeftAverage&&partial.Corrected.RightAverage==baseline.Corrected.RightAverage
+            &&partial.Corrected.LeftPeak==baseline.Corrected.LeftPeak&&partial.MedianLeft==baseline.MedianLeft&&partial.MedianRight==baseline.MedianRight
+            &&partial.FirstLeftNote?.CutDirectionAngleOffset==baseline.FirstLeftNote?.CutDirectionAngleOffset&&partial.Corrected.Segments.SequenceEqual(baseline.Corrected.Segments)
+            &&partial.SquatCount==null&&partial.SquatError!=null&&SelectedMapPresentation.Create(partial,DrawColor.White,DrawColor.White).Squats=="—"
+            &&partial.Corrected.LeftBins.Length<baseline.Corrected.LeftBins.Length,
+            $"v{major} {failure} walls cannot hide independent note metrics; long zero tail is excluded safely");
+        var hidden=Read(menuFeatures&~AnalysisFeatures.Squats);
+        Check(hidden.SquatCount==null&&hidden.SquatError==null&&hidden.Corrected.LeftAverage==baseline.Corrected.LeftAverage,$"v{major} hidden unsupported squats remain unrequested");
+        bool wallRejected=false;try{Read(AnalysisFeatures.All);}catch(NotSupportedException){wallRejected=true;}
+        Check(wallRejected,$"v{major} reference analysis still requires complete validated walls");
+        var movingNotes=(JObject)changed.DeepClone();movingNotes[major==2?"_notes":"colorNotes"]![0]![customKey]=new JObject {
+            [major==2?"_animation":"animation"]=new JObject {[major==2?"_position":"offsetPosition"]=new JArray(1,0,0)}};
+        File.WriteAllText(file,movingNotes.ToString());var densityPartial=Read(menuFeatures);
+        Check(densityPartial.NoteError!=null&&densityPartial.IndependentDensity&&densityPartial.Corrected.LeftBins.Length==0
+            &&densityPartial.Corrected.Segments.SequenceEqual(baseline.Corrected.Segments),$"v{major} unsupported moving notes expose density only, never swing statistics");
+        if(failure=="pitch")
+        {
+            var noteReason=AnalysisAvailabilityHints.Reason(densityPartial.NoteError);
+            var wallReason=AnalysisAvailabilityHints.Reason(densityPartial.SquatError);
+            Check(noteReason.Contains("object animation")&&wallReason.Contains("Tilted walls")&&noteReason!=wallReason,
+                $"v{major} mixed note/wall failures retain separate readable reasons");
+        }
+        wallRejected=false;try{Read(menuFeatures&~AnalysisFeatures.Density);}catch(NotSupportedException){wallRejected=true;}
+        Check(wallRejected,$"v{major} hidden density cannot admit otherwise unavailable moving notes/walls");
+    }
+    var noteOnlyFailure=(JObject)root.DeepClone();noteOnlyFailure[major==2?"_notes":"colorNotes"]![0]![customKey]=new JObject {
+        [major==2?"_animation":"animation"]=new JObject {[major==2?"_position":"offsetPosition"]=new JArray(1,0,0)}};
+    File.WriteAllText(file,noteOnlyFailure.ToString());var wallsPartial=Read(menuFeatures);
+    Check(wallsPartial.NoteError!=null&&wallsPartial.SquatError==null&&wallsPartial.SquatCount==baseline.SquatCount,
+        $"v{major} independently validated squats survive unsupported notes");
+    var wallsView=SelectedMapPresentation.Create(wallsPartial,DrawColor.White,DrawColor.White);
+    Check(wallsView.Average=="—"&&wallsView.Peak=="—"&&wallsView.Median=="—"&&wallsView.Left==null&&wallsView.Right==null&&wallsView.Colors.Length==90&&wallsPartial.IndependentDensity
+        &&wallsView.Squats==baseline.SquatCount!.Value.ToString()&&wallsView.Duration==12,
+        $"v{major} unsupported notes render dashes while preserving squat value and duration");
+    Check(wallsPartial.Corrected.RightBins.Length==0&&wallsPartial.Corrected.LeftBins.Length==0,
+        $"v{major} note failure never fabricates corrected note statistics");
+    Check(Read(AnalysisFeatures.Squats).NoteError==null,$"v{major} squat-only selection does not analyze hidden notes");
+    foreach(var mask in new[]{menuFeatures&~(AnalysisFeatures.Squats|AnalysisFeatures.Density),AnalysisFeatures.All})
+    {
+        bool noteRejected=false;try{Read(mask);}catch(NotSupportedException){noteRejected=true;}
+        Check(noteRejected,$"v{major} no wall fallback when squats hidden or reference requested");
+    }
+    string partialHistory=Path.Combine(isolated,DeathHistoryStore.FileName);
+    DeathHistoryStore.Append(partialHistory,new DeathRecord {Id="independent-wall-death",MapKey=PlayHistory.Key("independent-walls",3,"Standard"),SongTimeSeconds=3,Date=3000});
+    string historySnapshot=File.ReadAllText(partialHistory);
+    var wallsHistory=SelectedMapAnalyzer.Load(new SelectedMapRequest("independent-walls","Standard","Expert",3,file,legacyFile,partialHistory,features:menuFeatures));
+    Check(wallsHistory.LegacyHistoryStatus=="note-analysis-unavailable"&&wallsHistory.DeathMarkers.All(m=>m.Source!="legacy")
+        &&wallsHistory.DeathMarkers.Any(m=>m.Source=="beatinsight"&&m.NormalizedPosition==.25)&&File.ReadAllText(partialHistory)==historySnapshot
+        &&wallsHistory.BeatmapSha256==BeatmapFingerprint.Compute(File.ReadAllText(file)),
+        $"v{major} unsupported note indices stay hidden while own timed history remains read-only");
+    var player=(JObject)root.DeepClone();player[customKey]=new JObject {[major==2?"_customEvents":"customEvents"]=new JArray(new JObject {
+        [major==2?"_time":"b"]=0,[major==2?"_type":"t"]="AssignPlayerToTrack",[major==2?"_data":"d"]=new JObject {[major==2?"_track":"track"]="player"}})};
+    File.WriteAllText(file,player.ToString());var playerPartial=Read(menuFeatures);
+    Check(playerPartial.NoteError!=null&&playerPartial.IndependentDensity&&playerPartial.Corrected.LeftBins.Length==0
+        &&SelectedMapPresentation.Create(playerPartial,DrawColor.White,DrawColor.White).Left==null,
+        $"v{major} player movement remains unsupported for swings/pose while nominal density is independent");
+    if(major==3)foreach(string linked in new[]{"arc-bomb","chain"})
+    {
+        var linkedMap=(JObject)player.DeepClone();
+        if(linked=="arc-bomb")
+        {
+            linkedMap["bombNotes"]=new JArray(new JObject{["b"]=4,["x"]=1,["y"]=0});
+            linkedMap["sliders"]=new JArray(new JObject{["b"]=2,["x"]=0,["y"]=0,["c"]=0,["d"]=1,["tb"]=4,["tx"]=1,["ty"]=0,["tc"]=1});
+        }
+        else linkedMap["burstSliders"]=new JArray(new JObject{["b"]=2,["x"]=0,["y"]=0,["c"]=0,["d"]=1,["tb"]=3,["tx"]=1,["ty"]=1,["sc"]=4,["s"]=1});
+        File.WriteAllText(file,linkedMap.ToString());
+        var linkedPartial=SelectedMapAnalyzer.Load(new SelectedMapRequest("independent-walls","Standard","Expert",3,file,legacyFile,partialHistory,features:menuFeatures));
+        var linkedView=SelectedMapPresentation.Create(linkedPartial,DrawColor.White,DrawColor.White);
+        Check(linkedPartial.IndependentDensity&&linkedView.Colors.Length==90&&linkedView.Average=="—"&&linkedView.Peak=="—"&&linkedView.Median=="—"&&linkedView.Left==null&&linkedView.Right==null,
+            "Linked density exposes graph without unsupported statistics or pose: "+linked);
+        Check(linkedPartial.LegacyHistoryStatus=="note-analysis-unavailable"&&linkedPartial.DeathMarkers.All(m=>m.Source!="legacy")
+            &&linkedPartial.DeathMarkers.Any(m=>m.Source=="beatinsight"&&m.NormalizedPosition==.25)&&File.ReadAllText(partialHistory)==historySnapshot
+            &&linkedPartial.BeatmapSha256==BeatmapFingerprint.Compute(File.ReadAllText(file)),"Linked density preserves source identity and read-only timed history: "+linked);
+        bool hiddenRejected=false;try{Read(menuFeatures&~AnalysisFeatures.Density);}catch(NotSupportedException){hiddenRejected=true;}
+        Check(hiddenRejected,"Hidden linked density cannot admit unsupported geometry: "+linked);
+    }
+}
 DrawColor leftColor=new DrawColor(.8f,.1f,.2f),rightColor=new DrawColor(.1f,.6f,1);
+string privateDiagnostic="Unexpected parser failure <b>PRIVATE_DIAGNOSTIC_PAYLOAD</b>";
+Check(!AnalysisAvailabilityHints.Reason(privateDiagnostic).Contains("PRIVATE_DIAGNOSTIC_PAYLOAD")&&!AnalysisAvailabilityHints.Reason(privateDiagnostic).Contains("<"),
+    "Unknown diagnostics cannot leak exception details or rich-text markup into tooltips");
+string rotationDiagnostic="Unsupported gameplay data: worldRotation (<b>PRIVATE_DIAGNOSTIC_PAYLOAD</b>)";
+Check(AnalysisAvailabilityHints.Selection(SelectionStatus.Unsupported,rotationDiagnostic).Contains("world rotation")
+    &&!AnalysisAvailabilityHints.Selection(SelectionStatus.Unsupported,rotationDiagnostic).Contains("PRIVATE_DIAGNOSTIC_PAYLOAD"),
+    "Known unsupported geometry has a readable reason without echoing diagnostic contents");
+Check(AnalysisAvailabilityHints.Selection(SelectionStatus.Loading,rotationDiagnostic)=="Loading..."
+    &&AnalysisAvailabilityHints.Selection(SelectionStatus.Idle,rotationDiagnostic)=="Select a map.",
+    "New loading/idle states cannot retain an earlier map's unsupported reason");
+Check(AnalysisAvailabilityHints.Selection(SelectionStatus.Unavailable,rotationDiagnostic).Contains("found or loaded")
+    &&!AnalysisAvailabilityHints.Selection(SelectionStatus.Unavailable,rotationDiagnostic).Contains("not supported"),
+    "Missing map data is distinguished from unsupported map geometry");
+Check(AnalysisAvailabilityHints.Selection(SelectionStatus.Unavailable,"Game content is not ready").Contains("not loaded")
+    &&AnalysisAvailabilityHints.Selection(SelectionStatus.Error,privateDiagnostic)=="The selected map data could not be analyzed.",
+    "Pending game content and analysis errors have separate nontechnical messages");
 var readyPresentation=SelectedMapPresentation.Create(analysis,leftColor,rightColor);
 Check(readyPresentation.Average=="2.0 / 1.0"&&readyPresentation.Peak=="2 / 1"&&readyPresentation.Median=="2 / 1","AVG displays tenths; PEAK/MEDIAN preserve their format and hand order");
 Check(readyPresentation.Squats=="0","A real zero squat count is not an error dash");
@@ -297,6 +416,107 @@ Check(SelectedMapAnalyzer.Load(request).FirstLeftNote!.CutDirectionAngleOffset==
 tiltedJson["colorNotes"]![0]!["customData"]=JObject.Parse("""{"localRotation":[0,0,12]}""");File.WriteAllText(expert,tiltedJson.ToString());
 Check(SelectedMapAnalyzer.Load(request).FirstLeftNote!.CutDirectionAngleOffset==null,"Unsupported custom rotation is explicitly unknown instead of fabricated");
 if(args.Length==2&&args[0]=="--preview")Preview.Write(args[1],graphFixture,leftColor,rightColor);
+var jumpSnapshot=new JumpSettingsSnapshot(0,0,.5f);
+var jumpEqual=new JumpSettingsSnapshot(0,0,.5f);
+Check(jumpSnapshot.Equals(jumpEqual)&&jumpSnapshot.GetHashCode()==jumpEqual.GetHashCode(),"Equal jump snapshots retain value identity");
+string JumpIdentity(AnalysisFeatures features,JumpSettingsSnapshot? settings)=>SelectedMapRequest.SelectionIdentity("custom_level_TEST",3,"Standard",features,settings);
+foreach(var changed in new[]{new JumpSettingsSnapshot(1,0,.5f),new JumpSettingsSnapshot(0,1,.5f),new JumpSettingsSnapshot(0,0,.75f),new JumpSettingsSnapshot(0,MathF.BitIncrement(0f),.5f)})
+{
+    Check(!jumpSnapshot.Equals(changed)&&JumpIdentity(AnalysisFeatures.Squats,jumpSnapshot)!=JumpIdentity(AnalysisFeatures.Squats,changed),"Each jump input invalidates visible squat selection");
+    Check(JumpIdentity(AnalysisFeatures.Average,jumpSnapshot)==JumpIdentity(AnalysisFeatures.Average,changed),"Hidden squats do not cause jump-settings reanalysis");
+}
+Check(JumpIdentity(AnalysisFeatures.Squats,null)!=JumpIdentity(AnalysisFeatures.Squats,jumpSnapshot),"Unknown jump policy is distinct from an explicit default");
+var savedCulture=System.Globalization.CultureInfo.CurrentCulture;
+string invariantJump=jumpSnapshot.CacheIdentity;
+try{System.Globalization.CultureInfo.CurrentCulture=System.Globalization.CultureInfo.GetCultureInfo("fr-FR");Check(jumpSnapshot.CacheIdentity==invariantJump,"Jump selection identity is culture invariant");}
+finally{System.Globalization.CultureInfo.CurrentCulture=savedCulture;}
+foreach(var invalid in new[]{(Mode:2,Offset:0f,Fixed:.5f),(Mode:0,Offset:float.NaN,Fixed:.5f),(Mode:0,Offset:float.PositiveInfinity,Fixed:.5f),(Mode:1,Offset:0f,Fixed:0f),(Mode:1,Offset:0f,Fixed:float.NaN),(Mode:1,Offset:0f,Fixed:float.PositiveInfinity)})
+{
+    bool snapshotRejected=false;try{_ =new JumpSettingsSnapshot(invalid.Mode,invalid.Offset,invalid.Fixed);}catch(ArgumentOutOfRangeException){snapshotRejected=true;}
+    Check(snapshotRejected,"Unknown/nonfinite jump settings cannot become a usable snapshot");
+}
+var jumpRequest=new SelectedMapRequest("custom_level_TEST","Standard","Expert",3,expert,features:AnalysisFeatures.Squats,jumpSettings:jumpSnapshot);
+var jumpAnalysis=SelectedMapAnalyzer.Load(jumpRequest);
+Check(ReferenceEquals(jumpRequest.JumpSettings,jumpSnapshot)&&ReferenceEquals(jumpAnalysis.JumpSettings,jumpSnapshot),"Primitive jump snapshot reaches worker result unchanged");
+var hiddenJumpRequest=new SelectedMapRequest("custom_level_TEST","Standard","Expert",3,expert,features:AnalysisFeatures.Average,jumpSettings:jumpSnapshot);
+Check(hiddenJumpRequest.JumpSettings==null&&SelectedMapAnalyzer.Load(hiddenJumpRequest).JumpSettings==null,"Hidden wall feature removes unused jump snapshot from worker");
+var dynamicMovement=WallJumpMovement.Resolve(new JumpSettingsSnapshot(0,1,.5f),120,20,-1);
+Check(dynamicMovement.NoteJumpSpeed==20&&dynamicMovement.HalfJumpSeconds==.5f&&dynamicMovement.JumpSeconds==1,"Movement resolver combines dynamic map/player offsets");
+var staticMovement=WallJumpMovement.Resolve(new JumpSettingsSnapshot(1,2,.75f),120,20,-1);
+Check(staticMovement.HalfJumpSeconds==.75f&&staticMovement.JumpSeconds==1.5f,"Static movement uses fixed half-jump seconds");
+Check(WallJumpMovement.Resolve(new JumpSettingsSnapshot(1,2,.75f),120,20,-1,30,.25f).HalfJumpSeconds==.25f,"Object spawn offset replaces static seconds rather than adding beats");
+foreach(string invalid in new[]{"unknown","bpm","map-speed","map-offset","object-speed","object-offset","static-offset","variable","overflow"})
+{
+    bool movementRejected=false;
+    try{_ =WallJumpMovement.Resolve(invalid=="unknown"?null:new JumpSettingsSnapshot(invalid=="static-offset"?1:0,0,.5f),
+        invalid=="bpm"?0:120,invalid=="map-speed"?0:20,invalid=="map-offset"?float.NaN:0,
+        invalid=="object-speed"?-1:invalid=="overflow"?float.PositiveInfinity:(float?)null,
+        invalid=="object-offset"?float.NaN:invalid=="static-offset"?-1:(float?)null,invalid=="variable");}
+    catch(NotSupportedException){movementRejected=true;}
+    Check(movementRejected,"Unknown wall movement cannot silently use defaults: "+invalid);
+}
+bool distanceRejected=false;
+try{_ =WallJumpMovement.Resolve(new JumpSettingsSnapshot(1,0,float.MaxValue/4),120,20,0);}catch(NotSupportedException){distanceRejected=true;}
+Check(distanceRejected,"Finite inputs cannot silently overflow physical jump distance");
+var contactMovement=WallJumpMovement.Resolve(new JumpSettingsSnapshot(1,0,.5f),120,20,0);
+var centerContact=WallContactInterval.AtPointPlane(contactMovement,10,0,0,40);
+Check(centerContact.Start==10&&centerContact.End==12,"Canonical wall Z interval matches nominal front and wall duration");
+var forwardContact=WallContactInterval.AtPointPlane(contactMovement,10,.4f,0,40);
+Check(Math.Abs(forwardContact.Start-9.98f)<1e-6&&Math.Abs(forwardContact.End-11.98f)<1e-6,"Explicit forward head plane shifts both contact boundaries earlier");
+var shiftedContact=WallContactInterval.AtPointPlane(contactMovement,10,0,.2f,40.2f);
+Check(Math.Abs(shiftedContact.Start-10.01f)<1e-6&&Math.Abs(shiftedContact.End-12.01f)<1e-6,"Explicit local Z slab shift affects contact window");
+foreach(string invalid in new[]{"movement","time","head","min","max","reversed","overflow"})
+{
+    bool contactRejected=false;
+    try{_ =WallContactInterval.AtPointPlane(invalid=="movement"?null:contactMovement,invalid=="time"?float.NaN:10,
+        invalid=="head"?float.PositiveInfinity:invalid=="overflow"?-float.MaxValue:0,
+        invalid=="min"?float.NaN:invalid=="reversed"?2:invalid=="overflow"?float.MaxValue:0,
+        invalid=="max"?float.PositiveInfinity:invalid=="reversed"?1:invalid=="overflow"?float.MaxValue:40);}
+    catch(NotSupportedException){contactRejected=true;}
+    Check(contactRejected,"Unknown/invalid wall contact geometry stays unavailable: "+invalid);
+}
+string wallEntryFolder=Path.Combine(scratch,"wall-entry");Directory.CreateDirectory(wallEntryFolder);
+File.WriteAllText(Path.Combine(wallEntryFolder,"Info.dat"),"""{"_version":"2.1.0","_beatsPerMinute":120,"audio":{"songDuration":30},"_difficultyBeatmapSets":[{"_beatmapCharacteristicName":"Standard","_difficultyBeatmaps":[{"_difficulty":"Expert","_beatmapFilename":"map.dat","_noteJumpMovementSpeed":20,"_noteJumpStartBeatOffset":0,"_customData":{"_requirements":["Noodle Extensions"]}}]}]}""");
+string wallEntryFile=Path.Combine(wallEntryFolder,"map.dat");
+var wallEntryMap=JObject.Parse("""{"version":"3.3.0","colorNotes":[{"b":2,"x":0,"y":0,"c":0,"d":1},{"b":4,"x":1,"y":0,"c":1,"d":1}],"obstacles":[{"b":6,"d":0.25,"x":1,"y":2,"w":2,"h":3,"customData":{"animation":{"offsetPosition":[[-4,0,0,0.125],[0,0,0,0.375,"easeOutSine"]]}}}]}""");
+var knownMovement=new JumpSettingsSnapshot(0,0,.5f,true);
+SelectedMapAnalysis EntryRead(JObject root,JumpSettingsSnapshot? settings)
+{
+    File.WriteAllText(wallEntryFile,root.ToString());
+    return SelectedMapAnalyzer.Load(new SelectedMapRequest("wall-entry","Standard","Expert",3,wallEntryFile,features:new MenuVisibility().Features,jumpSettings:settings));
+}
+var entryAccepted=EntryRead(wallEntryMap,knownMovement);
+Check(entryAccepted.SquatCount==1&&entryAccepted.SquatError==null,"XY wall entry completed before nominal Z-contact yields squat count");
+var entryLoaded=LocalMap.Load(LocalMap.CaseFromFile(wallEntryFile,"Standard","Expert"),new MenuVisibility().Features,jumpSettings:knownMovement);
+Check(entryLoaded.Json==wallEntryMap.ToString()&&entryLoaded.HasNoodleGeometry&&JObject.Parse(entryLoaded.SquatJson!)["obstacles"]![0]!["customData"]!["animation"]!["offsetPosition"]==null,"Wall projection preserves original JSON and isolates validated squat input");
+Check(EntryRead(wallEntryMap,null).SquatCount==null&&EntryRead(wallEntryMap,new JumpSettingsSnapshot(0,0,.5f)).SquatCount==null,"Unknown movement never assumes normal/default wall timing");
+Check(EntryRead(wallEntryMap,new JumpSettingsSnapshot(1,0,.1f,true)).SquatCount==null,"Fixed jump setting can make the same wall entry overlap contact");
+Check(SelectedMapRequest.SelectionIdentity("wall-entry",3,"Standard",AnalysisFeatures.Squats,knownMovement)!=SelectedMapRequest.SelectionIdentity("wall-entry",3,"Standard",AnalysisFeatures.Squats,new JumpSettingsSnapshot(0,0,.5f)),"Song movement gate participates in selection identity");
+foreach(string invalid in new[]{"long","z-motion","late","rotation","scale","track","time","length","variable","tempo","environment","object-speed","object-offset"})
+{
+    var changed=(JObject)wallEntryMap.DeepClone();var wall=changed["obstacles"]![0]!;var custom=wall["customData"]!;var animation=custom["animation"]!;
+    if(invalid=="long")wall["d"]=10;
+    if(invalid=="z-motion")animation["offsetPosition"]![0]![2]=1;
+    if(invalid=="late")animation["offsetPosition"]![1]![3]=.75;
+    if(invalid=="rotation")custom["localRotation"]=new JArray(0,0,30);
+    if(invalid=="scale")animation["scale"]=new JArray(1,1,1);
+    if(invalid=="track")custom["track"]="fixture";
+    if(invalid=="time")animation["time"]=new JArray(0);
+    if(invalid=="length")custom["size"]=new JArray(2,3,1);
+    if(invalid=="variable")changed["njsEvents"]=new JArray(new JObject());
+    if(invalid=="tempo")changed["bpmEvents"]=new JArray(new JObject {["b"]=1,["m"]=180});
+    if(invalid=="environment")changed["customData"]=new JObject {["environment"]=new JArray(new JObject())};
+    if(invalid=="object-speed")custom["noteJumpMovementSpeed"]=80;
+    if(invalid=="object-offset")custom["noteJumpStartBeatOffset"]=-1;
+    var rejectedEntry=EntryRead(changed,knownMovement);
+    Check(rejectedEntry.SquatCount==null&&rejectedEntry.SquatError!=null&&rejectedEntry.Corrected.LeftAverage==entryAccepted.Corrected.LeftAverage,"Wall entry rejects unproven contact while preserving notes: "+invalid);
+}
+Check(WallJumpMovement.FromMeasured(20,.5f,1).HalfJumpSeconds==.5f,"Measured runtime provider uses actual half-jump duration");
+foreach(var value in new[]{(Speed:0f,Half:.5f,Jump:1f),(Speed:20f,Half:0f,Jump:1f),(Speed:20f,Half:.5f,Jump:2f),(Speed:20f,Half:.5f,Jump:float.NaN),(Speed:float.PositiveInfinity,Half:.5f,Jump:1f)})
+{
+    bool rejectedMovement=false;try{_ =WallJumpMovement.FromMeasured(value.Speed,value.Half,value.Jump);}catch(NotSupportedException){rejectedMovement=true;}
+    Check(rejectedMovement,"Unusable measured runtime movement cannot authorize wall entry");
+}
 Console.WriteLine($"Passed {checks} menu selection/rendering checks; no VR/game process or user history used.");
 
 sealed class ManualDispatcher

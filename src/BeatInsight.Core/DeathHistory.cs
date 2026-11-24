@@ -72,7 +72,7 @@ public static class DeathHistory
 
     public static DeathMarker[] LegacyMarkers(IEnumerable<PlayRecord> records, MapInput input)
     {
-        var times=input.Notes.Where(n=>n.ScoringType<=3).SelectMany(n=>Enumerable.Repeat(n.Time,Math.Max(1,n.SliceCount))).ToArray();
+        var times=input.Notes.Where(n=>n.ScoringType<=3&&!n.IsFake).SelectMany(n=>Enumerable.Repeat(n.Time,Math.Max(1,n.SliceCount))).ToArray();
         return records.Where(r=>r.IsPractice!=true&&r.LastNote>0).OrderByDescending(r=>r.Date).Take(100)
             .Select(r=> {
                 bool valid=r.LastNote<times.Length;

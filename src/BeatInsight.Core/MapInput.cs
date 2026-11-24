@@ -3,6 +3,10 @@ namespace BeatInsight.Core;
 
 public sealed class MapNote
 {
+    public bool IsFake { get; set; }
+    public bool MappingExtensions { get; set; }
+    public float? NoodleX { get; set; }
+    public float? NoodleY { get; set; }
     public float Time { get; set; }
     public float Beat { get; set; }
     public int X { get; set; }
@@ -15,6 +19,9 @@ public sealed class MapNote
 }
 public sealed class MapWall
 {
+    public float? CorrectedDuration { get; set; }
+    public bool? InfluencesWindowEnd { get; set; }
+    public bool IsFake { get; set; }
     public float Time { get; set; }
     public float Beat { get; set; }
     public float EndBeat { get; set; }

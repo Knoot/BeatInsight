@@ -36,6 +36,8 @@ public sealed class HistoryOverview
         var result=new HistoryOverview();
         string title=source=="legacy"?"Imported history (yellow crosses)":"BeatInsight history (red crosses)";
         string? unavailable=status switch {
+            "extension-positions-unverified"=>"Imported positions have not been verified for this map's custom geometry or chain processing.",
+            "note-analysis-unavailable"=>"Imported note positions are unavailable because note analysis is unsupported.",
             "source-missing"=>"History file not found.","key-absent"=>"No records for this difficulty.",
             "source-unreadable"=>"History file could not be read.","invalid-data"=>"History file contains invalid data.",
             "unsupported-schema"=>"History format is not supported.","not-requested"=>"History was not requested.",
@@ -58,7 +60,7 @@ public sealed class HistoryOverview
             int verified=visible.Length-result.Unverified;
             if(verified>0)lines.Add("Map version verified: "+verified+" shown positions.");
             if(result.Unverified>0)lines.Add("Map version unverified: "+result.Unverified+" shown positions.");
-            int exact=visible.Count(m=>m.TimingSource=="failure-song-time");
+            int exact=visible.Count(m=>(m.TimingSource=="failure-song-time"||m.TimingSource=="zero-energy-song-time"));
             int estimated=visible.Count(m=>m.TimingSource=="completion-song-time-fallback");
             int unknown=visible.Length-exact-estimated;
             if(exact>0)lines.Add("Recorded failure time: "+exact+".");

@@ -17,6 +17,7 @@ try {
     if(@(Compare-Object $expected $actual).Count){throw 'Package must contain only the four own assemblies.'}
     $plugin=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $PackageDirectory 'Plugins/BeatInsight.dll'),$readerParameters);$modules.Add($plugin)
     $main=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $GameRoot 'Beat Saber_Data/Managed/Main.dll'));$modules.Add($main)
+    $dataModels=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $GameRoot 'Beat Saber_Data/Managed/DataModels.dll'));$modules.Add($dataModels)
     $resources=@($plugin.Resources|Where-Object Name -like '*.manifest.json')
     if($resources.Count -ne 1){throw 'Expected one embedded BSIPA manifest.'}
     $reader=[IO.StreamReader]::new($resources[0].GetResourceStream())
@@ -62,7 +63,9 @@ try {
                 if([int]$targetName -ne 3){throw 'Only the explicitly validated constructor method type is supported.'}
                 $targetName='.ctor'
             }
-            $targetType=$main.Types|Where-Object FullName -eq $targetTypeName
+            $targetType=if($targetTypeName -eq 'PlayerData'){$dataModels.Types|Where-Object FullName -eq $targetTypeName}
+                elseif($targetTypeName -eq 'BeatSaberMarkupLanguage.GameplaySetup.GameplaySetup'){$bsml.Types|Where-Object FullName -eq $targetTypeName}
+                else{$main.Types|Where-Object FullName -eq $targetTypeName}
             $targets=@($targetType.Methods|Where-Object Name -eq $targetName)
             if($targets.Count -ne 1){throw "Missing or ambiguous Harmony target: $targetTypeName::$targetName"}
             $target=$targets[0]
@@ -83,7 +86,58 @@ try {
             $patches.Add(@{type=$targetTypeName;method=$targetName})
         }
     }
-    if($patches.Count -ne 15){throw 'Expected five gameplay/fingerprint, one seek, five menu/settings and four squat callback/song lifecycle patches.'}
+    if($patches.Count -ne 18){throw 'Expected five gameplay/fingerprint, one seek, seven menu/settings and five squat callback/song/movement lifecycle patches.'}
+    $settingsPatch=$plugin.Types|Where-Object FullName -eq 'BeatInsight.Mod.SettingsMenuPatch'
+    $settingsTarget=($settingsPatch.CustomAttributes|Where-Object {$_.AttributeType.FullName -eq 'HarmonyLib.HarmonyPatch'}).ConstructorArguments
+    if($settingsTarget[0].Value.FullName -ne 'BeatSaberMarkupLanguage.GameplaySetup.GameplaySetup' -or $settingsTarget[1].Value -ne 'Initialize' -or
+       !($settingsPatch.Methods.CustomAttributes.AttributeType.FullName -contains 'HarmonyLib.HarmonyPrefix')){throw 'Register settings before BSML initializes its tab tree.'}
+    $settingsMenu=$plugin.Types|Where-Object FullName -eq 'BeatInsight.Mod.MenuSettings'
+    $settingsEnable=$settingsMenu.Methods|Where-Object Name -eq 'Enable'
+    if($settingsEnable.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.Name -in @('EnsureRegistered','AddTab')}){throw 'Plugin enable must not rebuild an existing gameplay tab tree.'}
+    $settingsRegister=$settingsMenu.Methods|Where-Object Name -eq 'EnsureRegistered'
+    if($settingsRegister.Parameters.Count -ne 1 -or $settingsRegister.Parameters[0].ParameterType.FullName -ne 'BeatSaberMarkupLanguage.GameplaySetup.GameplaySetup' -or
+       ($settingsRegister.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.Name -eq 'get_Instance'})){throw 'Settings registration must use the initializing BSML instance.'}
+    $diagnostics=$plugin.Types|Where-Object FullName -eq 'BeatInsight.Mod.RuntimeDiagnostics'
+    if(!$diagnostics){throw 'Runtime diagnostics must be packaged.'}
+    $diagnosticRead=$diagnostics.Methods|Where-Object Name -eq 'Read'
+    if($diagnosticRead.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq 'HarmonyLib.AccessTools'}){throw 'Optional diagnostic member lookup must not generate Harmony warnings.'}
+    $dynamicHooks=[Collections.Generic.List[object]]::new()
+    $install=$diagnostics.Methods|Where-Object Name -eq 'Install'
+    foreach($instruction in $install.Body.Instructions){
+        if($instruction.Operand -isnot [Mono.Cecil.MethodReference] -or $instruction.Operand.Name -ne 'Hook'){continue}
+        $methodName=$instruction.Previous.Operand
+        $typeName=$instruction.Previous.Previous.Operand
+        $assemblyName=$instruction.Previous.Previous.Previous.Operand
+        if($methodName -in @('Update','ManualUpdate','LateUpdate','FixedUpdate','ShouldShow')){throw 'Diagnostics must not hook per-frame/playback paths.'}
+        if($assemblyName -eq 'Main'){$diagnosticModule=$main}
+        elseif($assemblyName -eq 'NoodleExtensions' -and !(Test-Path -LiteralPath (Join-Path $GameRoot 'Plugins/NoodleExtensions.dll'))){continue}
+        else{
+            $diagnosticPath=Join-Path $GameRoot $(if($assemblyName -eq 'NoodleExtensions'){'Plugins/NoodleExtensions.dll'}else{"Beat Saber_Data/Managed/$assemblyName.dll"})
+            $diagnosticModule=[Mono.Cecil.ModuleDefinition]::ReadModule($diagnosticPath);$modules.Add($diagnosticModule)
+        }
+        $diagnosticType=$diagnosticModule.Types|Where-Object FullName -eq $typeName
+        $targets=@($diagnosticType.Methods|Where-Object Name -eq $methodName)
+        if($targets.Count -ne 1){throw "Missing/ambiguous diagnostic boundary: $typeName::$methodName"}
+        if($targets[0].ReturnType.FullName -ne 'System.Void' -and $targets[0].IsStatic){throw 'Non-void static diagnostic boundary needs a distinct adapter.'}
+        $dynamicHooks.Add(@{assembly=$assemblyName;type=$typeName;method=$methodName})
+    }
+    if($dynamicHooks.Count -lt 11){throw 'Expected required scene/room diagnostic boundaries.'}
+    foreach($name in @('Before','After','BeforeStatic','AfterStatic','AfterResult')){
+        $adapter=$diagnostics.Methods|Where-Object Name -eq $name
+        if($adapter.ReturnType.FullName -ne 'System.Void' -or !$adapter.IsStatic){throw 'Diagnostic adapter must be an observational void method.'}
+        foreach($parameter in $adapter.Parameters){
+            $injectionType=switch($parameter.Name){'__instance'{'System.Object'} '__originalMethod'{'System.Reflection.MethodBase'} '__args'{'System.Object[]'} '__result'{'System.Object'} default{throw 'Unsupported diagnostic injection argument.'}}
+            if($parameter.ParameterType.FullName -ne $injectionType -or $parameter.ParameterType.IsByReference){throw 'Diagnostic adapter must not replace arguments/results.'}
+        }
+    }
+    $energyCounter=$main.Types|Where-Object Name -eq 'GameEnergyCounter'
+    $zeroEvent=$energyCounter.Events|Where-Object Name -eq 'gameEnergyDidReach0Event'
+    if(!$zeroEvent -or $zeroEvent.EventType.FullName -ne 'System.Action' -or !$zeroEvent.AddMethod.IsPublic -or !$zeroEvent.RemoveMethod.IsPublic){throw 'Zero-energy observation contract changed.'}
+    $capture=$plugin.Types|Where-Object FullName -eq 'BeatInsight.Mod.RuntimeCapture'
+    foreach($contract in @(@{method='Attach';call='add_gameEnergyDidReach0Event'},@{method='Detach';call='remove_gameEnergyDidReach0Event'},@{method='DetachAll';call='remove_gameEnergyDidReach0Event'})){
+        $owner=$capture.Methods|Where-Object Name -eq $contract.method
+        if(!($owner.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq 'GameEnergyCounter' -and $_.Operand.Name -eq $contract.call})){throw 'Zero-energy observer must be attached and removed with the gameplay manager.'}
+    }
     $presenter=$plugin.Types|Where-Object FullName -eq 'BeatInsight.Mod.SquatWarningPresenter'
     $visited=[Collections.Generic.HashSet[string]]::new()
     function Test-WarningSignalMethod($method){
@@ -101,6 +155,37 @@ try {
         }
     }
     Test-WarningSignalMethod ($presenter.Methods|Where-Object Name -eq 'Show')
+    $warnings=$plugin.Types|Where-Object FullName -eq 'BeatInsight.Mod.SquatWarnings'
+    $lookup=$warnings.Methods|Where-Object Name -eq 'ShouldShow'
+    $prepareWarnings=$warnings.Methods|Where-Object Name -eq 'Prepare'
+    if(!($prepareWarnings.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.Name -eq 'HasCustomWallGeometry'})){throw 'Custom obstacle geometry must be checked before warning playback.'}
+    foreach($instruction in $lookup.Body.Instructions){
+        if($instruction.OpCode.Name -in @('newobj','newarr')){throw 'Prepared warning lookup must not allocate.'}
+        if($instruction.Operand -is [Mono.Cecil.MethodReference] -and $instruction.Operand.Name -in @('Build','MappingActive','GetValue','OrderBy','ToArray','HasCustomWallGeometry')){throw 'Warning lookup must not prepare geometry or inspect extension state.'}
+    }
+    $warningLibrary=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $PackageDirectory 'Libs/BeatInsight.WallAlert.dll'),$readerParameters);$modules.Add($warningLibrary)
+    $playback=$warningLibrary.Types|Where-Object FullName -eq 'BeatInsight.WallAlert.SquatWarningPlayback'
+    foreach($method in $playback.Methods|Where-Object Name -in @('Observe','Reset')){
+        if(@($method.Body.Instructions|Where-Object {$_.OpCode.Name -in @('newobj','newarr')}).Count){throw 'Prepared warning playback/reset must not allocate.'}
+    }
+    $callbackInit=$main.Types.Where({$_.Name -eq 'BeatmapCallbacksController'}).NestedTypes|Where-Object Name -eq 'InitData'
+    foreach($required in @(@{name='beatmapData';type='IReadonlyBeatmapData'},@{name='startFilterTime';type='System.Single'})){
+        if(!($callbackInit.Fields|Where-Object {$_.Name -eq $required.name -and $_.FieldType.FullName -eq $required.type})){throw 'Loaded callback obstacle snapshot contract changed.'}
+    }
+    $mappingPlugin=Join-Path $GameRoot 'Plugins/MappingExtensions.dll'
+    if(Test-Path -LiteralPath $mappingPlugin){
+        $mappingModule=[Mono.Cecil.ModuleDefinition]::ReadModule($mappingPlugin);$modules.Add($mappingModule)
+        $mappingType=$mappingModule.Types|Where-Object FullName -eq 'MappingExtensions.Plugin'
+        if(!($mappingType.Fields|Where-Object {$_.Name -eq 'active' -and $_.IsStatic -and $_.FieldType.FullName -eq 'System.Boolean'})){throw 'Mapping Extensions activation contract changed.'}
+    }
+    $customPlugin=Join-Path $GameRoot 'Plugins/CustomJSONData.dll'
+    if(Test-Path -LiteralPath $customPlugin){
+        $customModule=[Mono.Cecil.ModuleDefinition]::ReadModule($customPlugin);$modules.Add($customModule)
+        $obstacleMetadata=$customModule.Types|Where-Object FullName -eq 'CustomJSONData.CustomBeatmap.CustomObstacleData'
+        foreach($required in @('customData','version')){
+            if(!($obstacleMetadata.Properties|Where-Object {$_.Name -eq $required -and $_.GetMethod.IsPublic})){throw 'Custom obstacle fake metadata contract changed.'}
+        }
+    }
     $models=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $GameRoot 'Beat Saber_Data/Managed/DataModels.dll'));$modules.Add($models)
     $hmui=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $GameRoot 'Beat Saber_Data/Managed/HMUI.dll'));$modules.Add($hmui)
     foreach($item in @(
@@ -129,7 +214,7 @@ try {
             $references.Add(@{assembly=$module.Assembly.Name.Name;reference=$reference.FullName})
         }
     }
-    $result=@{status='pass';validation='metadata, packaged references and Harmony signatures; game not started';gameVersion=$manifest.gameVersion;patches=$patches.ToArray();references=$references.ToArray();files=@($expected|ForEach-Object {@{file=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $PackageDirectory $_)).Hash}})}
+    $result=@{status='pass';validation='metadata, packaged references and Harmony signatures; game not started';gameVersion=$manifest.gameVersion;patches=$patches.ToArray();diagnosticHooks=$dynamicHooks.ToArray();references=$references.ToArray();files=@($expected|ForEach-Object {@{file=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $PackageDirectory $_)).Hash}})}
     if($Report){$result|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $Report}
-    Write-Host "Package metadata, references and $($patches.Count) Harmony targets verified."
+    Write-Host "Package metadata, references and $($patches.Count) Harmony targets and $($dynamicHooks.Count) diagnostic hooks verified."
 } finally {foreach($module in $modules){$module.Dispose()};$resolver.Dispose()}

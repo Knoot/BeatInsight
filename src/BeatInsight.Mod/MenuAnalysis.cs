@@ -1,3 +1,4 @@
+using System.Linq;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -17,11 +18,14 @@ public sealed class MenuSelection
     public string Difficulty {get;}
     public int DifficultyRank {get;}
     public AnalysisFeatures Features {get;}
+    public JumpSettingsSnapshot? JumpSettings {get;}
+    public bool PreserveExtendedWallLayers {get;}
     internal BeatmapLevelsModel Model {get;}
     internal BeatmapKey Key {get;}
-    internal MenuSelection(BeatmapLevelsModel model,BeatmapKey key,AnalysisFeatures features)
+    internal MenuSelection(BeatmapLevelsModel model,BeatmapKey key,AnalysisFeatures features,JumpSettingsSnapshot? jumpSettings,bool preserveExtendedWallLayers)
     {
-        Model=model;Key=key;Features=features;LevelId=key.levelId;Characteristic=key.beatmapCharacteristic.serializedName;
+        PreserveExtendedWallLayers=preserveExtendedWallLayers;
+        Model=model;Key=key;Features=features;JumpSettings=jumpSettings;LevelId=key.levelId;Characteristic=key.beatmapCharacteristic.serializedName;
         Difficulty=key.difficulty.ToString();DifficultyRank=(int)key.difficulty;
     }
 }
@@ -33,6 +37,7 @@ public static class MenuAnalysis
     static SelectionCoordinator<MenuSelection,SelectedMapAnalysis>? requests;
     static StandardLevelDetailViewController? active;
     static BeatmapLevelsModel? model;
+    static PlayerDataModel? playerModel;
     static string? submittedKey;
     static readonly SelectionState<MenuSelection,SelectedMapAnalysis> idle=new SelectionState<MenuSelection,SelectedMapAnalysis>(0,SelectionStatus.Idle);
     public static SelectionState<MenuSelection,SelectedMapAnalysis> Current=>requests?.Current??idle;
@@ -46,6 +51,15 @@ public static class MenuAnalysis
             action=>UnityMainThreadTaskScheduler.Factory.StartNew(action));
         requests.Changed+=state=> {
             Plugin.Log.Debug("Selection analysis: "+state.Status+(state.Message==null?"":"; "+state.Message));
+            if(RuntimeDiagnostics.CanRecord)
+            {
+                var r=state.Result;
+                RuntimeDiagnostics.Record("menu.analysis",new{state.Revision,status=state.Status.ToString(),state.Message,
+                    map=r?.MapKey,hash=r?.BeatmapSha256,features=r?.Features.ToString(),squats=r?.SquatCount,squatError=r?.SquatError,noteError=r?.NoteError,
+                    independentDensity=r?.IndependentDensity,densityError=r?.DensityError,
+                    ownHistory=r?.OwnHistoryStatus,legacyHistory=r?.LegacyHistoryStatus,
+                    markers=r?.DeathMarkers.TakeLast(12).Select(m=>new{m.Source,m.SongTimeSeconds,m.ColorHex,m.PositionStatus}).ToArray()});
+            }
             Notify(state);
         };
     }
@@ -54,6 +68,7 @@ public static class MenuAnalysis
     {
         Unsubscribe();Observe(requests?.ClearAsync()??Task.CompletedTask);
         active=controller;model=loader;submittedKey=null;
+        playerModel=(PlayerDataModel)AccessTools.Field(typeof(StandardLevelDetailViewController),"_playerDataModel").GetValue(controller);
         controller.didChangeDifficultyBeatmapEvent+=DifficultyChanged;
         controller.didChangeContentEvent+=ContentChanged;
         Submit(controller);
@@ -78,7 +93,7 @@ public static class MenuAnalysis
             active!.didChangeDifficultyBeatmapEvent-=DifficultyChanged;
             active.didChangeContentEvent-=ContentChanged;
         }
-        active=null;model=null;submittedKey=null;
+        active=null;model=null;playerModel=null;submittedKey=null;
     }
 
     static void DifficultyChanged(StandardLevelDetailViewController controller)
@@ -109,9 +124,35 @@ public static class MenuAnalysis
         if(!ready){Unavailable("Game content is not ready");return;}
         var key=controller.beatmapKey;
         if(controller.beatmapLevel==null||!key.IsValid()||model==null){Clear(controller);return;}
-        string identity=PlayHistory.Key(key.levelId,(int)key.difficulty,key.beatmapCharacteristic.serializedName)+"|"+(int)features;
+        var jump=SnapshotJumpSettings(features);
+        bool preserve=false;
+        if((features&AnalysisFeatures.Squats)!=0)
+        {
+            var converter=AccessTools.Method(typeof(BeatmapTypeConverters),"ConvertNoteLineLayer",new[]{typeof(int)});
+            preserve=Harmony.GetPatchInfo(converter)?.Postfixes.Any(p=>p.PatchMethod.DeclaringType?.FullName=="MappingExtensions.HarmonyPatches.BeatmapTypeConvertersConvertNoteLineLayerPatch")==true;
+        }
+        string identity=SelectedMapRequest.SelectionIdentity(key.levelId,(int)key.difficulty,key.beatmapCharacteristic.serializedName,features,jump,preserve);
         if(submittedKey==identity&&(requests.Current.Status==SelectionStatus.Loading||requests.Current.Status==SelectionStatus.Ready))return;
-        submittedKey=identity;Observe(requests.SelectAsync(new MenuSelection(model,key,features)));
+        submittedKey=identity;Observe(requests.SelectAsync(new MenuSelection(model,key,features,jump,preserve)));
+    }
+
+    static JumpSettingsSnapshot? SnapshotJumpSettings(AnalysisFeatures features)
+    {
+        if((features&AnalysisFeatures.Squats)==0)return null;
+        var settings=playerModel?.playerData?.playerSpecificSettings;
+        if(settings==null)return null;
+        try{return new JumpSettingsSnapshot((int)settings.noteJumpDurationTypeSettings,settings.noteJumpStartBeatOffset,settings.noteJumpFixedDuration,
+            playerModel!.playerData.gameplayModifiers!=null&&(int)playerModel.playerData.gameplayModifiers.songSpeed==0&&!playerModel.playerData.gameplayModifiers.fastNotes);}
+        catch(ArgumentOutOfRangeException){return null;}
+    }
+
+    internal static void PlayerSettingsChanged(PlayerData player)
+    {
+        if(active==null)return;
+        Observe(UnityMainThreadTaskScheduler.Factory.StartNew(()=> {
+            if(active==null||!ReferenceEquals(playerModel?.playerData,player))return;
+            try {Submit(active);}catch(Exception e){Unavailable(e.Message);}
+        }));
     }
 
     internal static void SettingsChanged()
@@ -139,7 +180,7 @@ public static class MenuAnalysis
             string file=(string)AccessTools.Field(typeof(FileDifficultyBeatmap),"_beatmapPath").GetValue(entry);
             string userData=IPA.Utilities.UnityGame.UserDataPath;
             return new SelectedMapRequest(selection.LevelId,selection.Characteristic,selection.Difficulty,selection.DifficultyRank,file,
-                Path.Combine(userData,"SongPlayData.json"),Path.Combine(userData,DeathHistoryStore.FileName),features:selection.Features);
+                Path.Combine(userData,"SongPlayData.json"),Path.Combine(userData,DeathHistoryStore.FileName),features:selection.Features,jumpSettings:selection.JumpSettings,preserveExtendedWallLayers:selection.PreserveExtendedWallLayers);
         }).ConfigureAwait(false);
         token.ThrowIfCancellationRequested();
         // Returning to the menu can race with our background death write. Await

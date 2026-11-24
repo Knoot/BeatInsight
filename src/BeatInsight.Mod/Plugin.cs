@@ -30,6 +30,7 @@ public sealed class Plugin
             SquatWarnings.Enable();
             harmony=new Harmony("arevu.beatinsight");
             harmony.PatchAll(Assembly.GetExecutingAssembly());
+            try {RuntimeDiagnostics.Enable();}catch(Exception e){Log.Warn("Runtime diagnostics unavailable: "+e.Message);}
             MenuSettings.Enable();
             Log.Info("BeatInsight menu analysis and death capture enabled; game integration still requires live validation.");
         }
@@ -53,6 +54,7 @@ public sealed class Plugin
         Stop(MenuUI.Disable,"menu UI");
         Stop(MenuAnalysis.Disable,"menu analysis");
         Stop(RuntimeCapture.Disable,"gameplay capture");
+        Stop(RuntimeDiagnostics.Disable,"runtime diagnostics");
     }
     static void Stop(Action cleanup,string name)
     {try{cleanup();}catch(Exception e){Log.Error("Could not clean up "+name+": "+e);}}

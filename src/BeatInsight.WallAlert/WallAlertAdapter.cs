@@ -11,10 +11,11 @@ namespace BeatInsight.WallAlert
 {
     public static class WallAlertAdapter
     {
-        public static int Count(string json,float bpm)=>WallAnalyzer.AnalyzeCrouchWalls(json,bpm).SquatCount;
-        public static object Analyze(string json, float bpm)
+        public static int Count(string json,float bpm,bool mappingExtensions=false,bool noodleExtensions=false,bool preserveExtendedLayers=false)=>Result(json,bpm,mappingExtensions,noodleExtensions,preserveExtendedLayers).SquatCount;
+        static WallAnalysis Result(string json,float bpm,bool mappingExtensions,bool noodleExtensions,bool preserveExtendedLayers=false)=>noodleExtensions?NoodleWallAnalysis.Analyze(json,bpm):mappingExtensions?MappingWallAnalysis.Analyze(json,bpm):WallAnalyzer.AnalyzeCrouchWalls(json,bpm,preserveExtendedLayers);
+        public static object Analyze(string json, float bpm,bool mappingExtensions=false,bool noodleExtensions=false)
         {
-            var result = WallAnalyzer.AnalyzeCrouchWalls(json, bpm);
+            var result = Result(json,bpm,mappingExtensions,noodleExtensions);
             return new
             {
                 implementation = "built-in-wall-analyzer",

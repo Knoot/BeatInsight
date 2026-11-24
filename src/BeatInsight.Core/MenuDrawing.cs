@@ -54,7 +54,14 @@ public sealed class FirstNoteVisual
     }
     public static FirstNoteVisual? From(MapNote? note,DrawColor color)
     {
-        if(note==null||note.Direction<0||note.Direction>8)return null;
+        if(note==null||note.IsFake)return null;
+        if(note.MappingExtensions&&MappingNotes.IsExtendedDirection(note.Direction))
+        {
+            float? tilt=note.CutDirectionAngleOffset;
+            return new FirstNoteVisual {Direction=MappingNotes.IsRotatedDot(note.Direction)?8:1,
+                RotationZ=tilt.HasValue&&!float.IsNaN(tilt.Value)&&!float.IsInfinity(tilt.Value)?MappingNotes.Angle(note.Direction)+tilt.Value:(float?)null,Color=color};
+        }
+        if(note.Direction<0||note.Direction>8)return null;
         float? rotation=null;
         if(note.CutDirectionAngleOffset.HasValue&&!float.IsNaN(note.CutDirectionAngleOffset.Value)&&!float.IsInfinity(note.CutDirectionAngleOffset.Value))
             rotation=CompatibleAnalysis.Angle(note.Direction)+note.CutDirectionAngleOffset.Value;

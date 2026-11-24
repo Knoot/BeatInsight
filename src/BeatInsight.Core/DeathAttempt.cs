@@ -12,6 +12,9 @@ public sealed class DeathAttempt
     readonly string mapKey;
     readonly HistoryModifiers modifiers;
     readonly bool practice;
+    readonly bool noFail;
+    double? zeroEnergyTime;
+    long zeroEnergyDate;
     string? beatmapHash;
     bool hashFrozen;
     double? failureTime;
@@ -19,18 +22,18 @@ public sealed class DeathAttempt
     bool completed;
     bool sought;
     bool recordingSuppressed;
-    public void SuppressRecording(){if(!completed){recordingSuppressed=true;failureTime=null;}}
+    public void SuppressRecording(){if(!completed){recordingSuppressed=true;failureTime=null;zeroEnergyTime=null;}}
     public string? ExclusionReason {get;private set;}
     public void FreezeBeatmapHash()=>hashFrozen=true;
     public bool PrepareBeatmapHash(string? hash)
     {
-        if(hashFrozen||completed||failureTime.HasValue)return false;
+        if(hashFrozen||completed||failureTime.HasValue||zeroEnergyTime.HasValue)return false;
         beatmapHash=hash;return true;
     }
     public bool ExcludeAfterSeek()
     {
         if(completed||sought)return false;
-        sought=true;failureTime=null;return true;
+        sought=true;failureTime=null;zeroEnergyTime=null;return true;
     }
 
     public DeathAttempt(string mapKey, HistoryModifiers modifiers, bool practice, string? beatmapHash=null)
@@ -38,6 +41,7 @@ public sealed class DeathAttempt
         if(string.IsNullOrWhiteSpace(mapKey))throw new ArgumentException("Exact map key is required",nameof(mapKey));
         if(modifiers==null)throw new ArgumentNullException(nameof(modifiers));
         this.mapKey=mapKey;this.practice=practice;this.beatmapHash=beatmapHash;
+        noFail=modifiers.Additional.TryGetValue("noFailOn0Energy",out var flag)&&bool.TryParse(flag,out var value)&&value;
         this.modifiers=new HistoryModifiers {LegacyParam=modifiers.LegacyParam,NoBombs=modifiers.NoBombs,
             Obstacles=modifiers.Obstacles,SpeedPreset=modifiers.SpeedPreset,SpeedMultiplier=modifiers.SpeedMultiplier,
             Additional=new Dictionary<string,string>(modifiers.Additional)};
@@ -52,6 +56,12 @@ public sealed class DeathAttempt
         failureTime=songTimeSeconds;failureDate=unixMilliseconds;return true;
     }
 
+    public bool CaptureZeroEnergy(double songTimeSeconds,long unixMilliseconds)
+    {
+        if(!noFail||practice||sought||recordingSuppressed||completed||zeroEnergyTime.HasValue||!ValidTime(songTimeSeconds))return false;
+        hashFrozen=true;zeroEnergyTime=songTimeSeconds;zeroEnergyDate=unixMilliseconds;return true;
+    }
+
     public DeathRecord? Complete(AttemptOutcome outcome,double completionSongTimeSeconds,long unixMilliseconds)
     {
         if(completed)return null;
@@ -61,6 +71,15 @@ public sealed class DeathAttempt
         if(practice){ExclusionReason="practice";return null;}
         if(recordingSuppressed){ExclusionReason="recording-disabled";return null;}
         if(sought){ExclusionReason="song-seek";return null;}
+        if(noFail)
+        {
+            if(outcome!=AttemptOutcome.Cleared){ExclusionReason="no-fail-not-cleared";return null;}
+            if(!zeroEnergyTime.HasValue){ExclusionReason="no-observed-zero-energy";return null;}
+            var noFailRecord=DeathHistory.Create(mapKey,zeroEnergyTime.Value,zeroEnergyDate,
+                modifiers,false,true,beatmapHash)!;
+            noFailRecord.TimingSource="zero-energy-song-time";
+            return noFailRecord;
+        }
         if(outcome==AttemptOutcome.Cleared){ExclusionReason="cleared";return null;}
         // Modified completion results are not evidence of a real failure.
         if(!failureTime.HasValue){ExclusionReason="no-observed-failure";return null;}

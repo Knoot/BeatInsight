@@ -334,7 +334,7 @@ public sealed class MenuUI:MonoBehaviour
     void Render(SelectionState<MenuSelection,SelectedMapAnalysis> state)
     {
         data=new MenuRenderData();
-        string unavailable=state.Status switch {SelectionStatus.Loading=>"Loading...",SelectionStatus.Idle=>"Select a map.",SelectionStatus.Unsupported=>"This map is not supported yet.",_=>"Data unavailable."};
+        string unavailable=AnalysisAvailabilityHints.Selection(state.Status,state.Message);
         string[] descriptions={
             "Average swings per second (left/right)\nOnly seconds containing swings are included.",
             "Peak swings per second (left/right)",
@@ -353,7 +353,12 @@ public sealed class MenuUI:MonoBehaviour
             for(int i=0;i<hints.Count;i++)hints[i].text=descriptions[i];
             int seconds=Mathf.Max(0,(int)result.Duration);
             hints[6].text+="\nSong time: 0:00 – "+(seconds/60)+":"+(seconds%60).ToString("00",CultureInfo.InvariantCulture);
-            if(result.SquatError!=null)hints[5].text+="\nSquat count unavailable.";
+            if(result.SquatError!=null)hints[5].text+="\n"+AnalysisAvailabilityHints.Unavailable("Squat count unavailable.",result.SquatError);
+            if(result.NoteError!=null)
+            {
+                for(int i=0;i<5;i++)hints[i].text+="\n"+AnalysisAvailabilityHints.Unavailable("Note analysis unavailable.",result.NoteError);
+                hints[6].text+=result.IndependentDensity?"\nNominal object density; note geometry is not verified.":"\n"+AnalysisAvailabilityHints.Unavailable("Density unavailable.",result.DensityError??result.NoteError);
+            }
             if(data.ImportedHistory!=null)hints[7].text=data.ImportedHistory.Tooltip;
             if(data.OwnHistory!=null)hints[8].text=data.OwnHistory.Tooltip;
             Plugin.Log.Debug("History markers: imported="+result.DeathMarkers.Count(m=>m.Source=="legacy"&&m.NormalizedPosition.HasValue)+

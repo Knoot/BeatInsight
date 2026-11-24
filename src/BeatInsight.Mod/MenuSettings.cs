@@ -17,14 +17,12 @@ internal static class MenuSettings
     internal static void Enable()
     {
         enabled=true;
-        if(Resources.FindObjectsOfTypeAll<MainFlowCoordinator>().Any(flow=>flow.isActivated))EnsureRegistered();
     }
-    internal static void EnsureRegistered()
+    internal static void EnsureRegistered(GameplaySetup settings)
     {
         if(!enabled)return;
         try
         {
-            var settings=GameplaySetup.Instance;
             if(ReferenceEquals(owner,settings))return;
             Remove();settings.AddTab(TabName,"BeatInsight.Mod.Settings.bsml",Plugin.Config);owner=settings;
             Plugin.Log.Debug("Gameplay setup settings tab registered.");

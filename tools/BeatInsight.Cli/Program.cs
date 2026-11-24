@@ -5,6 +5,7 @@ using Newtonsoft.Json;
 
 try
 {
+    if(args.Length==1&&args[0]=="--profile-version"){Console.WriteLine(LocalMap.AnalysisProfileVersion);return 0;}
     const string usage="Usage: <map folder> <characteristic> <difficulty> [SongPlayData.json] [exact levelId] [BeatInsight.Deaths.json] [--file <relative beatmap path>]";
     if(args.Length<3)throw new ArgumentException(usage);
     string? exactFile=null;
@@ -38,7 +39,8 @@ try
     string historyStatus="not-requested";
     if(args.Length>=4)
     {
-        if(!File.Exists(args[3]))historyStatus="source-missing";
+        if(map.HasNoodleGeometry||map.HasNoodleChains)historyStatus="extension-positions-unverified";
+        else if(!File.Exists(args[3]))historyStatus="source-missing";
         else if(args.Length<5)historyStatus="exact-levelId-required";
         else
         {
@@ -50,20 +52,20 @@ try
     }
     var compatible=CompatibleAnalysis.Analyze(map.Input,history:selected);
     var corrected=CompatibleAnalysis.Analyze(map.Input,reproduceKnownDefects:false,history:selected);
-    int historyObjects=map.Input.Notes.Where(n=>n.ScoringType<=3).Sum(n=>Math.Max(1,n.SliceCount));
+    int historyObjects=selected.Count==0?0:map.Input.Notes.Where(n=>n.ScoringType<=3).Sum(n=>Math.Max(1,n.SliceCount));
     var ownHistory=args.Length>=6?DeathHistoryStore.Read(args[5]):new DeathHistoryReadResult {Status="not-requested"};
     int difficultyRank=test.Difficulty switch {"Easy"=>0,"Normal"=>1,"Hard"=>2,"Expert"=>3,"ExpertPlus"=>4,_=>throw new ArgumentException("Unknown difficulty")};
     string? historyKey=args.Length>=5&&!string.IsNullOrWhiteSpace(args[4])?PlayHistory.Key(args[4],difficultyRank,test.Characteristic):null;
     string mapHash=BeatmapFingerprint.Compute(map.Json);
-    var legacyMarkers=DeathHistory.LegacyMarkers(selected,map.Input);
+    var legacyMarkers=selected.Count==0?Array.Empty<DeathMarker>():DeathHistory.LegacyMarkers(selected,map.Input);
     var ownMarkers=historyKey==null?Array.Empty<DeathMarker>():DeathHistory.OwnMarkers(ownHistory.Records,historyKey,map.Input.Duration,mapHash);
     Console.WriteLine(JsonConvert.SerializeObject(new {
-        schemaVersion=3,profileVersion=4,profile="vanilla-neutral",test.Characteristic,test.Difficulty,test.File,map.Version,map.Features,
+        schemaVersion=3,profileVersion=BeatInsight.Formats.LocalMap.AnalysisProfileVersion,profile=map.NoodleExtensions?"noodle-static-neutral":map.MappingExtensions?"mapping-neutral":"vanilla-neutral",test.Characteristic,test.Difficulty,test.File,map.Version,map.Features,
         selectionDiagnostics=mapSelection.Diagnostics,
         implementation="independent; no reference implementation DLL is loaded by this CLI",
         compatible,corrected,
         median=new {left=WindowStatistics.ActiveWindowMedian(corrected.LeftBins),right=WindowStatistics.ActiveWindowMedian(corrected.RightBins),unit="swings/s",policy=WindowStatistics.ActiveHandMedianPolicy},
-        squats=WallAlertAdapter.Analyze(map.Json,map.Bpm),
+        squats=WallAlertAdapter.Analyze(map.SquatJson??map.Json,map.Bpm,map.MappingExtensions,map.NoodleExtensions),
         history=new {status=historyStatus,aggregates=PlayHistory.Aggregate(selected),positions=compatible.HistoryIndices.Select((index,i)=>new {index,status=index>=historyObjects?"invalid-index":"available",seconds=index>=historyObjects?(float?)null:compatible.HistorySeconds[i],normalized=index>=historyObjects?(float?)null:compatible.HistoryNormalized[i]}),policy="reference implementation selects LastNote>0, Date descending, latest 100; invalid indices explicitly flagged here; chain links repeat head time"},
         deathMarkers=new {legacyStatus=historyStatus,ownStatus=historyKey==null&&args.Length>=6?"exact-levelId-required":ownHistory.Status,markers=legacyMarkers.Concat(ownMarkers).ToArray(),policy="yellow crosses: imported history; red crosses: BeatInsight; practice excluded; modifiers preserved without implicit speed rescaling"}
     },Formatting.Indented));

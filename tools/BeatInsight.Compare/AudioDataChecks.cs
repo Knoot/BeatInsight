@@ -87,7 +87,7 @@ static class AudioDataChecks
             if(differences.Count>0){failed++;status="mismatch";}
             results.Add(new {fixture.Name,status,nativeError,invalid,fixture.SchemaRejected,differences});
         }
-        return new {schemaVersion=1,profileVersion=4,cases=cases.Count,failed,rejected,gameStarted=false,userHistoryRead=false,
+        return new {schemaVersion=1,profileVersion=BeatInsight.Formats.LocalMap.AnalysisProfileVersion,cases=cases.Count,failed,rejected,gameStarted=false,userHistoryRead=false,
             scope="v4 sample-anchored timing and referenced gameplay data; malformed mandatory metadata is explicitly unsupported",results};
     }
 }

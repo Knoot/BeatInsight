@@ -11,6 +11,12 @@ internal sealed class PreparedSlider
     public float TailTime { get; set; }
     public int TailX { get; set; }
     public int TailY { get; set; }
+    public float? NoodleTailX { get; set; }
+    public float? NoodleTailY { get; set; }
+    public bool Noodle { get; set; }
+    public MapNote? SourceNote { get; set; }
+    public MapNote? RowPartner { get; set; }
+    public bool IsOrphan { get; set; }
     public bool Chain { get; set; }
 }
 
@@ -53,14 +59,14 @@ internal static class NotePreparation
         {
             foreach(var slider in rowHeads)
                 foreach(var note in rowNotes)
-                    if(note.X==slider.Head.X&&note.Y==slider.Head.Y)
+                    if(NoodleGeometry.Same(note,slider.Head))
                     {
-                        if(slider.Chain){chainGameplay.Add(note);note.ScoringType=4;}
+                        if(slider.Chain){chainGameplay.Add(note);note.ScoringType=4;if(slider.Noodle&&prepareOrientation)NoodleBurstPreparation.Tilt(note,slider);}
                         else {arcHeads.Add(note);note.ScoringType=2;}
                     }
             foreach(var slider in rowTails)
                 foreach(var note in rowNotes)
-                    if(note.X==slider.TailX&&note.Y==slider.TailY)
+                    if(NoodleGeometry.Same(note,slider.TailX,slider.TailY,slider.NoodleTailX,slider.NoodleTailY))
                         note.ScoringType=chainGameplay.Contains(note)?7:arcHeads.Contains(note)?6:3;
             rowNotes.Clear();rowHeads.Clear();rowTails.Clear();
         }
@@ -94,12 +100,34 @@ internal static class NotePreparation
         foreach(var chain in chains)
         {
             var head=chain.Head;
-            head.CutDirectionAngleOffset=notes.FirstOrDefault(n=>n.Time==head.Time&&n.X==head.X&&n.Y==head.Y&&n.Color==head.Color)?.CutDirectionAngleOffset;
+            var source=chain.Noodle?chain.SourceNote:notes.FirstOrDefault(n=>n.Time==head.Time&&NoodleGeometry.Same(n,head)&&n.Color==head.Color);
+            head.CutDirectionAngleOffset=source?.CutDirectionAngleOffset;
         }
         // reference implementation excludes actual ChainHead/ChainHeadArcTail objects, then creates
         // a separate basic note from every chain. An arc may have overwritten a
         // chain head's scoring type back to ArcHead; that note must NOT be deleted.
-        return orderedNotes.Where(n=>n.ScoringType>0&&n.ScoringType!=4&&n.ScoringType!=7).Concat(chains.Select(s=>s.Head))
-            .OrderBy(n=>n.Time).ToArray();
+        var customChains=chains.Where(s=>s.Noodle).ToArray();
+        if(customChains.Length==0)
+            return orderedNotes.Where(n=>n.ScoringType>0&&n.ScoringType!=4&&n.ScoringType!=7).Concat(chains.Select(s=>s.Head)).OrderBy(n=>n.Time).ToArray();
+        // A shared arc can change scoringType without changing burst gameplayType.
+        // Replace by source identity, once, in the original note position.
+        var replacements=customChains.Where(s=>!s.IsOrphan).ToDictionary(s=>s.SourceNote!,s=>s.Head);
+        var result=new List<MapNote>();
+        foreach(var note in orderedNotes)
+        {
+            if(replacements.TryGetValue(note,out var head))result.Add(head);
+            else if(note.ScoringType>0&&note.ScoringType!=4&&note.ScoringType!=7)result.Add(note);
+        }
+        result.AddRange(chains.Where(s=>!s.Noodle).Select(s=>s.Head));
+        foreach(var orphan in customChains.Where(s=>s.IsOrphan))
+        {
+            var head=orphan.Head;int slices=head.SliceCount-1;
+            // The spawner starts at slice 1, never at the absent physical head.
+            result.Add(new MapNote {Time=head.Time+(orphan.TailTime-head.Time)/slices,
+                Beat=head.Beat,Color=head.Color,Direction=8,SliceCount=slices,
+                X=slices==1?orphan.TailX:head.X,Y=slices==1?orphan.TailY:head.Y,
+                CutDirectionAngleOffset=null});
+        }
+        return result.OrderBy(n=>n.Time).ToArray();
     }
 }

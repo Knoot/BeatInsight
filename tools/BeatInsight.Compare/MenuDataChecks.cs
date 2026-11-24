@@ -19,7 +19,7 @@ static class MenuDataChecks
             var request=new SelectedMapRequest("synthetic-menu-identity-"+results.Count,test.Characteristic,test.Difficulty,rank,LocalMap.SafePath(folder,test.File));
             var snapshot=SelectedMapAnalyzer.Load(request,CancellationToken.None);
             var map=LocalMap.Load(test);
-            var game=GameLoader.Load(gameRoot,map.Json,map.Bpm,map.AudioJson);
+            var game=GameLoader.Load(gameRoot,map.Json,map.Bpm,map.AudioJson,mappingExtensions:map.MappingExtensions,noodleExtensions:map.NoodleExtensions);
             var original=oracle.Analyze(map.Input,game);
             var differences=Comparison.Diff(original,snapshot.Compatible);
             // Oracle fixtures always inject synthetic attempts. This pass covers
@@ -29,7 +29,7 @@ static class MenuDataChecks
             foreach(var difference in Comparison.Diff(corrected,snapshot.Corrected))differences["corrected."+difference.Key]=difference.Value;
             if(snapshot.MedianLeft!=WindowStatistics.ActiveWindowMedian(corrected.LeftBins)||snapshot.MedianRight!=WindowStatistics.ActiveWindowMedian(corrected.RightBins))
                 differences["median"]="UI median differs from active per-hand policy";
-            if(snapshot.SquatCount!=BeatInsight.WallAlert.WallAlertAdapter.Count(map.Json,map.Bpm))differences["squats"]="UI squat count differs from reference analyzer";
+            if(snapshot.SquatCount!=BeatInsight.WallAlert.WallAlertAdapter.Count(map.SquatJson??map.Json,map.Bpm,map.MappingExtensions))differences["squats"]="UI squat count differs from reference analyzer";
             foreach(var first in new[]{snapshot.FirstLeftNote,snapshot.FirstRightNote})
             {
                 if(first?.CutDirectionAngleOffset==null)continue;
@@ -61,7 +61,7 @@ static class MenuDataChecks
         }
         var orientation=OrientationChecks.Run(gameRoot,out int orientationFailures);
         if(orientationFailures>0)failed++;
-        return new {schemaVersion=1,profileVersion=4,scope="menu data pipeline; map outputs compared with original IL; history tested separately on synthetic fixtures",
+        return new {schemaVersion=1,profileVersion=BeatInsight.Formats.LocalMap.AnalysisProfileVersion,scope="menu data pipeline; map outputs compared with original IL; history tested separately on synthetic fixtures",
             cases=results.Count,selectiveCases,failed,gameStarted=false,userHistoryRead=false,results,orientation};
     }
 }

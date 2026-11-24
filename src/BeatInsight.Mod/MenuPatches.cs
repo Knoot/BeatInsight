@@ -1,13 +1,14 @@
 using System;
 using HarmonyLib;
+using BeatSaberMarkupLanguage.GameplaySetup;
 
 namespace BeatInsight.Mod;
 
-[HarmonyPatch(typeof(MainFlowCoordinator),"DidActivate")]
+[HarmonyPatch(typeof(GameplaySetup),"Initialize")]
 internal static class SettingsMenuPatch
 {
-    [HarmonyPostfix]
-    static void Postfix()=>MenuSettings.EnsureRegistered();
+    [HarmonyPrefix]
+    static void Prefix(GameplaySetup __instance)=>MenuSettings.EnsureRegistered(__instance);
 }
 
 [HarmonyPatch(typeof(StandardLevelDetailViewController),"DidActivate")]
@@ -57,5 +58,27 @@ internal static class MenuClearPatch
     {
         try {MenuAnalysis.Clear(__instance);}
         catch(Exception e){Plugin.Log.Error("Could not clear menu analysis: "+e);}
+    }
+}
+
+[HarmonyPatch(typeof(PlayerData),"set_playerSpecificSettings")]
+internal static class PlayerJumpSettingsPatch
+{
+    [HarmonyPostfix]
+    static void Postfix(PlayerData __instance)
+    {
+        try {MenuAnalysis.PlayerSettingsChanged(__instance);}
+        catch(Exception e){Plugin.Log.Error("Could not refresh jump settings: "+e);}
+    }
+}
+
+[HarmonyPatch(typeof(PlayerData),"set_gameplayModifiers")]
+internal static class PlayerMovementModifiersPatch
+{
+    [HarmonyPostfix]
+    static void Postfix(PlayerData __instance)
+    {
+        try {MenuAnalysis.PlayerSettingsChanged(__instance);}
+        catch(Exception e){Plugin.Log.Error("Could not refresh movement modifiers: "+e);}
     }
 }

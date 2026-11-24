@@ -128,6 +128,7 @@ sealed class OriginalOracle
     {
         // These are real game NoteData objects; only getters and managed math are called.
         var notes = input.Notes.Select(n => NoteData.CreateBasicNoteData(n.Time, n.Beat, 0, n.X, (NoteLineLayer)n.Y, (ColorType)n.Color, (NoteCutDirection)n.Direction)).ToList();
+        for(int i=0;i<notes.Count;i++)if(input.Notes[i].IsFake)NativeFakeRegistry.Mark(notes[i]);
         var walls = input.Walls.Select(w => new ObstacleData(w.Time, w.Beat, w.EndBeat, 0, w.X, (NoteLineLayer)w.Y, w.Duration, w.Width, w.Height)).ToList();
         var self = RuntimeHelpers.GetUninitializedObject(level);
         Set(level, self, "$s92sJU0KuriMsfarVs0bLw", notes);
@@ -140,7 +141,7 @@ sealed class OriginalOracle
             Call(level, self, Prepare, gameData);
             notes = (List<NoteData>)level.GetField("$s92sJU0KuriMsfarVs0bLw", Flags)!.GetValue(self)!;
         }
-        LastPrepared = new MapInput { Duration=input.Duration, Notes=notes.Select(n => new MapNote { Time=n.time, Beat=n.beat, X=n.lineIndex, Y=(int)n.noteLineLayer, Color=(int)n.colorType, Direction=(int)n.cutDirection }).ToArray() };
+        LastPrepared = new MapInput { Duration=input.Duration, Notes=notes.Select(n => new MapNote { IsFake=NativeFakeRegistry.IsFake(n),Time=n.time, Beat=n.beat, X=n.lineIndex, Y=(int)n.noteLineLayer, Color=(int)n.colorType, Direction=(int)n.cutDirection }).ToArray() };
         var bins = ((int[], int[]))Call(level, self, Arrays)!;
         var first = ((float, float))Call(level, self, First)!;
         float Avg(int[] a) => (float)Call(level, self, Average, a)!;
@@ -179,5 +180,5 @@ sealed class OriginalOracle
 public static class OracleBridge
 {
     public static LinkedList<BeatmapDataItem> GetItems(object data) => (LinkedList<BeatmapDataItem>)data.GetType().GetProperty("allBeatmapDataItems")!.GetValue(data)!;
-    public static bool IsFakeNote(BeatmapDataItem item) => false; // Vanilla profile only; extension maps are explicitly skipped.
+    public static bool IsFakeNote(BeatmapDataItem item) => NativeFakeRegistry.IsFake(item);
 }

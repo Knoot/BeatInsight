@@ -39,7 +39,7 @@ static class ModifierChecks
         File.WriteAllText(Path.Combine(fixtureFolder,"Info.dat"),"""{"_version":"2.1.0","_beatsPerMinute":120,"audio":{"songDuration":10},"_difficultyBeatmapSets":[{"_beatmapCharacteristicName":"Standard","_difficultyBeatmaps":[{"_difficulty":"Expert","_beatmapFilename":"map.dat"}]}]}""");
         File.WriteAllText(Path.Combine(fixtureFolder,"map.dat"),"""{"version":"3.3.0","colorNotes":[{"b":1,"x":0,"y":0,"c":0,"d":0},{"b":2,"x":3,"y":1,"c":1,"d":1},{"b":4,"x":1,"y":0,"c":0,"d":1}],"bombNotes":[{"b":2,"x":2,"y":0},{"b":3,"x":0,"y":2}],"sliders":[{"b":1,"x":0,"y":0,"c":0,"tb":3,"tx":0,"ty":2}],"burstSliders":[{"b":4,"x":1,"y":0,"c":0,"d":1,"tb":4.5,"tx":1,"ty":1,"sc":4,"s":1}],"obstacles":[{"b":3,"x":0,"y":0,"d":1,"w":1,"h":5},{"b":5,"x":1,"y":2,"d":1,"w":2,"h":3},{"b":8,"x":2,"y":1,"d":1,"w":1,"h":4}]}""");
         cases.Add(("synthetic-bombs-arc-chain-wall-heights",LocalMap.Load(LocalMap.Cases(fixtureFolder).Single())));
-        var neutralRaw=cases.ToDictionary(c=>c.Name,c=>Comparison.Hash(JsonConvert.SerializeObject(GameLoader.Describe(GameLoader.Load(gameRoot,c.Map.Json,c.Map.Bpm,c.Map.AudioJson)))));
+        var neutralRaw=cases.ToDictionary(c=>c.Name,c=>Comparison.Hash(JsonConvert.SerializeObject(GameLoader.Describe(GameLoader.Load(gameRoot,c.Map.Json,c.Map.Bpm,c.Map.AudioJson,mappingExtensions:c.Map.MappingExtensions)))));
         var results=new List<object>();int failed=0;
         foreach(var test in cases)
         foreach(string speed in new[]{"Normal","Faster","Slower","SuperFast"})
@@ -53,7 +53,7 @@ static class ModifierChecks
             float speedMultiplier=(float)modifiersType.GetProperty("songSpeedMul")!.GetValue(modifiers)!;
             float expectedSpeed=speed switch {"Normal"=>1f,"Faster"=>1.2f,"Slower"=>.85f,"SuperFast"=>1.5f,_=>throw new Exception("Unknown speed")};
             if(speedMultiplier!=expectedSpeed)throw new Exception("Speed mapping changed");
-            var raw=GameLoader.Load(gameRoot,test.Map.Json,test.Map.Bpm,test.Map.AudioJson,modifiers);
+            var raw=GameLoader.Load(gameRoot,test.Map.Json,test.Map.Bpm,test.Map.AudioJson,modifiers,test.Map.MappingExtensions);
             bool rawLoaderUnchanged=neutralRaw[test.Name]==Comparison.Hash(JsonConvert.SerializeObject(GameLoader.Describe(raw)));
             var parameters=transform.GetParameters();var args=new object?[parameters.Length];
             args[0]=raw;args[1]=level;args[2]=modifiers;args[3]=false;

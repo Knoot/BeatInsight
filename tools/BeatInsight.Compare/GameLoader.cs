@@ -41,11 +41,18 @@ static class GameLoader
         for (var current = type; current != null && current != typeof(object); current = current.BaseType)
             foreach (var f in current.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
                 f.SetValue(value, Read(token[f.Name], f.FieldType));
+        if(NativeFakeRegistry.Enabled&&token is JObject)
+        {
+            JToken? fake=type.Namespace=="BeatmapSaveDataVersion2_6_0AndEarlier"?token["_customData"]?["_fake"]:type.Namespace=="BeatmapSaveDataVersion3"?token["customData"]?["NE_fake"]:null;
+            if(fake?.Type==JTokenType.Boolean&&(bool)fake)NativeFakeRegistry.Mark(value);
+        }
         return value;
     }
-    public static object Load(string gameRoot, string json, float bpm, string? audioJson = null, object? gameplayModifiers = null)
+    public static object Load(string gameRoot, string json, float bpm, string? audioJson = null, object? gameplayModifiers = null,bool mappingExtensions=false,bool noodleExtensions=false)
     {
-        var asm = AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.GetFullPath(Path.Combine(gameRoot, "Beat Saber_Data/Managed/DataModels.dll")));
+        MappingNativeRuntime.Enabled=mappingExtensions;
+        NativeFakeRegistry.Enabled=noodleExtensions;
+        var asm = AssemblyLoadContext.Default.Assemblies.Single(a=>a.GetName().Name=="DataModels");
         var root = JObject.Parse(json);
         // Lighting is outside this oracle's scope and requires a Unity environment.
         // Keep all gameplay objects, BPM and rotation inputs unchanged.
@@ -62,7 +69,7 @@ static class GameLoader
         {
             var p = parameters[i];
             args[i] = p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType) : null;
-            if (p.ParameterType.FullName == ns + ".BeatmapSaveData") args[i] = Read(root, p.ParameterType);
+            if (p.ParameterType.FullName == ns + ".BeatmapSaveData") args[i] = noodleExtensions?NoodleNativeData.Deserialize(gameRoot,root,version):Read(root, p.ParameterType);
             else if(p.ParameterType.FullName=="GameplayModifiers") args[i]=gameplayModifiers;
             else if (p.ParameterType.FullName == "BeatmapLevelSaveDataVersion4.AudioSaveData")
                 args[i] = Read(JObject.Parse(audioJson ?? throw new InvalidDataException("Missing AudioData")), p.ParameterType);

@@ -9,6 +9,8 @@ internal static class AttemptFingerprintPatch
     [HarmonyPrefix]
     static void Prefix(GameplayCoreSceneSetupData ____sceneSetupData)
     {
+        SquatWarnings.SetPlayerSettings(____sceneSetupData.playerSpecificSettings.leftHanded,
+            ____sceneSetupData.gameplayModifiers!=null&&(int)____sceneSetupData.gameplayModifiers.songSpeed==0&&!____sceneSetupData.gameplayModifiers.fastNotes);
         try {RuntimeCapture.PrepareFingerprint(____sceneSetupData);}
         catch(Exception e){Plugin.Log.Warn("Could not prepare death fingerprint; map version remains unknown: "+e.Message);}
     }
@@ -29,11 +31,11 @@ internal static class AttemptStartPatch
 internal static class GameplayStartPatch
 {
     [HarmonyPostfix]
-    static void Postfix(StandardLevelGameplayManager __instance,AudioTimeSyncController ____audioTimeSyncController)
+    static void Postfix(StandardLevelGameplayManager __instance,AudioTimeSyncController ____audioTimeSyncController,GameEnergyCounter ____gameEnergyCounter)
     {
         try {SquatWarnings.Prepare();}
         catch(Exception e){Plugin.Log.Error("Could not prepare squat warning resources: "+e);}
-        try {RuntimeCapture.Attach(__instance,____audioTimeSyncController);}
+        try {RuntimeCapture.Attach(__instance,____audioTimeSyncController,____gameEnergyCounter);}
         catch(Exception e){Plugin.Log.Error("Could not attach BeatInsight failure capture: "+e);}
     }
 }
