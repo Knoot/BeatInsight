@@ -171,14 +171,32 @@ public static class MenuAnalysis
         var snapshot=await UnityMainThreadTaskScheduler.Factory.StartNew(()=> {
             token.ThrowIfCancellationRequested();
             if(result.isError||result.beatmapLevelData==null)throw new IOException("Game loader could not load the selected level");
+            string userData=IPA.Utilities.UnityGame.UserDataPath;
+            RuntimeDiagnostics.Record("menu.source",new{provider=result.beatmapLevelData.GetType().FullName,selection.LevelId,
+                selection.Characteristic,selection.Difficulty,features=selection.Features.ToString()});
+            if(result.beatmapLevelData is BeatmapLevelDataSO bundled&&!selection.LevelId.StartsWith("custom_level_",StringComparison.OrdinalIgnoreCase))
+            {
+                var level=selection.Model.GetBeatmapLevel(selection.LevelId)??throw new FileNotFoundException("Selected level metadata is unavailable");
+                if(level.songTimeOffset!=0)throw new NotSupportedException("Bundled map audio offsets have not been validated");
+                var key=selection.Key;
+                string json=result.beatmapLevelData.GetBeatmapString(in key)??throw new FileNotFoundException("Selected bundled beatmap data is unavailable");
+                string? audio=result.beatmapLevelData.GetAudioDataString();
+                bool needDuration=(selection.Features&(AnalysisFeatures.Density|AnalysisFeatures.ImportedDeaths|AnalysisFeatures.OwnDeaths|AnalysisFeatures.Reference))!=0;
+                float duration=needDuration?(bundled.songAudioClip!=null?bundled.songAudioClip.length:level.songDuration):0;
+                var documents=MapDocuments.Bundled(json,audio,level.beatsPerMinute,duration,selection.Characteristic,selection.Difficulty);
+                RuntimeDiagnostics.Record("menu.documents",new{source="bundle",selection.LevelId,
+                    selection.Characteristic,selection.Difficulty,characters=json.Length,audioCharacters=audio?.Length,bpm=level.beatsPerMinute,duration});
+                return new SelectedMapRequest(selection.LevelId,selection.Characteristic,selection.Difficulty,selection.DifficultyRank,"",
+                    Path.Combine(userData,"SongPlayData.json"),Path.Combine(userData,DeathHistoryStore.FileName),features:selection.Features,
+                    jumpSettings:selection.JumpSettings,preserveExtendedWallLayers:selection.PreserveExtendedWallLayers,documents:documents);
+            }
             if(!(result.beatmapLevelData is FileSystemBeatmapLevelData files))
-                throw new NotSupportedException("Only filesystem beatmaps are supported by the menu analyzer at this stage");
+                throw new NotSupportedException("This beatmap data provider is not supported by the menu analyzer");
             var entries=(Dictionary<(BeatmapCharacteristicSO,BeatmapDifficulty),FileDifficultyBeatmap>)
                 AccessTools.Field(typeof(FileSystemBeatmapLevelData),"_difficultyBeatmaps").GetValue(files);
             if(!entries.TryGetValue((selection.Key.beatmapCharacteristic,selection.Key.difficulty),out var entry))
                 throw new FileNotFoundException("Selected difficulty is missing from the loaded level");
             string file=(string)AccessTools.Field(typeof(FileDifficultyBeatmap),"_beatmapPath").GetValue(entry);
-            string userData=IPA.Utilities.UnityGame.UserDataPath;
             return new SelectedMapRequest(selection.LevelId,selection.Characteristic,selection.Difficulty,selection.DifficultyRank,file,
                 Path.Combine(userData,"SongPlayData.json"),Path.Combine(userData,DeathHistoryStore.FileName),features:selection.Features,jumpSettings:selection.JumpSettings,preserveExtendedWallLayers:selection.PreserveExtendedWallLayers);
         }).ConfigureAwait(false);

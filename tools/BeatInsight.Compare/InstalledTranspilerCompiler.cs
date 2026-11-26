@@ -8,7 +8,7 @@ namespace BeatInsight.Compare;
 static class InstalledTranspilerCompiler
 {
     internal static (DynamicMethod Method,int Original,int Patched) Compile(MethodBase original,MethodInfo patch,
-        Func<OpCode,object?,(OpCode Code,object? Operand)>? rewrite=null,bool exceptionBlocks=false,object? patchInstance=null)
+        Func<OpCode,object?,(OpCode Code,object? Operand)>? rewrite=null,bool exceptionBlocks=false,object? patchInstance=null,IReadOnlyList<MethodInfo>? followingPatches=null)
         {
             var harmony=AssemblyLoadContext.Default.LoadFromAssemblyName(new AssemblyName("0Harmony"));
             var reader=harmony.GetType("HarmonyLib.PatchProcessor",true)!.GetMethods().Single(m=>m.Name=="GetOriginalInstructions"&&m.GetParameters().Length==2&&m.GetParameters()[1].ParameterType==typeof(ILGenerator));
@@ -23,7 +23,10 @@ static class InstalledTranspilerCompiler
             // Duplicating them shifts LocalBuilder indices used by transpilers.
             var source=(IEnumerable)reader.Invoke(null,new object[]{original,il})!;
             int before=source.Cast<object>().Count();
-            var instructions=((IEnumerable)patch.Invoke(patchInstance,new object[]{source})!).Cast<object>().ToArray();
+            source=(IEnumerable)patch.Invoke(patchInstance,new object[]{source})!;
+            if(followingPatches!=null)foreach(var following in followingPatches)
+                source=(IEnumerable)following.Invoke(null,new object[]{source})!;
+            var instructions=source.Cast<object>().ToArray();
             foreach(var instruction in instructions)
             {
                 var boundaries=((IEnumerable)blocks.GetValue(instruction)!).Cast<object>().ToArray();

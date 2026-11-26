@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "maps": [
+    {
+      "Folder": "4c110 (Everytime We Touch - Tonkie)",
+      "Characteristic": "Standard",
+      "Difficulty": "Expert",
+      "File": "ExpertStandard.dat"
+    },
+    {
+      "Folder": "55727 (Sledge - Simbo)",
+      "Characteristic": "Lawless",
+      "Difficulty": "ExpertPlus",
+      "File": "ExpertPlusLawless.dat"
+    }
+  ]
+}

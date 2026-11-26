@@ -1,12 +1,18 @@
 [CmdletBinding()]
 param(
     [string]$GameRoot,
-    [string]$OutputDirectory = '.local/noodle-note-prefabs',
-    [string]$PythonDependencies = '.local/unity-py'
+    [string]$OutputDirectory,
+    [string]$PythonDependencies
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'LocalSettings.ps1')
+$previousArtifactRoot=$env:BEATINSIGHT_LOCAL_ROOT
+try {
+$env:BEATINSIGHT_LOCAL_ROOT=Get-BeatInsightLocalRoot
+if(!$OutputDirectory){$OutputDirectory=Join-Path (Get-BeatInsightLocalRoot) 'noodle-note-prefabs'}
+$OutputDirectory=Resolve-BeatInsightOutputDirectory $OutputDirectory
+if(!$PythonDependencies){$PythonDependencies=Join-Path (Get-BeatInsightLocalRoot) 'unity-py'}
 $prefabGameRoot = Get-BeatInsightSetting GameRoot $GameRoot
 $prefabAssetDirectory = Join-Path $prefabGameRoot 'Beat Saber_Data/StreamingAssets/aa/StandaloneWindows64'
 $prefabBundles = @(Get-ChildItem -LiteralPath $prefabAssetDirectory -Filter 'maincore_assets_all_*.bundle')
@@ -29,3 +35,5 @@ try {
 finally {
     $env:PYTHONPATH = $previousPythonPath
 }
+
+} finally { $env:BEATINSIGHT_LOCAL_ROOT=$previousArtifactRoot }

@@ -7,15 +7,15 @@ using UnityEngine;
 
 namespace BeatInsight.Compare;
 
-// Euler is an opaque host edge: verify its exact arguments and transport of
-// supplied quaternions, without pretending to execute Unity's native conversion.
+// Euler is a controlled host edge: outputs are opaque controls or captured
+// game samples; this host does not execute Unity's native conversion.
 static class NoodleRotationConstructorChecks
 {
     const BindingFlags flags=BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance|BindingFlags.Static;
     sealed class EulerContext
     {
         internal readonly Dictionary<(float,float,float),Quaternion> Outputs=new();
-        internal readonly List<(float,float,float)> Calls=new();
+        internal readonly List<(float,float,float)> Calls=new(),Expected=new();
     }
     static EulerContext? current;
     static int failureSinkCalls;
@@ -30,7 +30,7 @@ static class NoodleRotationConstructorChecks
     {failureSinkCalls++;throw new InvalidDataException("Native rotation constructor rejected source metadata",error);}
     static object Get(object value,string name)=>value.GetType().GetProperty(name,flags)?.GetValue(value)??value.GetType().GetField(name,flags)?.GetValue(value)
         ??throw new InvalidDataException("Rotation source member changed: "+name);
-    internal static object Run(string gameRoot)
+    internal static object Run(string gameRoot,RotationMathCapture? capture=null)
     {
         if(current!=null)throw new InvalidOperationException("Nested constructor rotation probe");
         failureSinkCalls=0;
@@ -95,9 +95,11 @@ static class NoodleRotationConstructorChecks
             {
                 if(current!=null)throw new InvalidOperationException("Nested Euler source parse");
                 string key=major==2?"_customData":"customData";
+                var worldAngles=world.HasValue&&capture!=null?capture.Angles(world.Value,mode.Scalar):mode.Scalar?new Vector3(0,23.75f,0):new Vector3(12.25f,23.75f,34.5f);
+                var localAngles=local.HasValue&&capture!=null?capture.Angles(local.Value):new Vector3(-15.5f,-25.25f,35.125f);
                 var metadata=new JObject();
-                if(world.HasValue)metadata[major==2?"_rotation":"worldRotation"]=mode.Scalar?new JValue(23.75f):new JArray(12.25f,23.75f,34.5f);
-                if(local.HasValue)metadata[major==2?"_localRotation":"localRotation"]=new JArray(-15.5f,-25.25f,35.125f);
+                if(world.HasValue)metadata[major==2?"_rotation":"worldRotation"]=mode.Scalar?new JValue(worldAngles.y):new JArray(worldAngles.x,worldAngles.y,worldAngles.z);
+                if(local.HasValue)metadata[major==2?"_localRotation":"localRotation"]=new JArray(localAngles.x,localAngles.y,localAngles.z);
                 if(invalidRotation!=null)metadata[major==2?"_rotation":"worldRotation"]=invalidRotation.DeepClone();
                 var json=major==2?new JObject{["_version"]="2.6.0",["_notes"]=new JArray(new JObject{["_time"]=source.beat,["_lineIndex"]=source.lineIndex,["_lineLayer"]=(int)source.noteLineLayer,["_type"]=(int)source.colorType,["_cutDirection"]=(int)source.cutDirection,[key]=metadata}),
                     ["_events"]=new JArray(new JObject{["_time"]=0,["_type"]=14,["_value"]=6},new JObject{["_time"]=2,["_type"]=15,["_value"]=3})}:
@@ -110,20 +112,21 @@ static class NoodleRotationConstructorChecks
                 var note=(NoteData)converter.Invoke(null,new[]{instance,raw})!;
                 var nativeMetadata=Get(note,"customData");var data=RuntimeHelpers.GetUninitializedObject(noteType);
                 var context=new EulerContext();
-                if(world.HasValue)context.Outputs.Add(mode.Scalar?(0f,23.75f,0f):(12.25f,23.75f,34.5f),world.Value);
-                if(local.HasValue)context.Outputs.Add((-15.5f,-25.25f,35.125f),local.Value);
+                void Register(Vector3 angles,Quaternion value){var tuple=(angles.x,angles.y,angles.z);context.Outputs[tuple]=value;context.Expected.Add(tuple);}
+                if(world.HasValue)Register(worldAngles,world.Value);
+                if(local.HasValue)Register(localAngles,local.Value);
                 current=context;
                 try
                 {
                     constructors[noteCtor].Invoke(null,new[]{data,(object)note,nativeMetadata,120f,Activator.CreateInstance(parameters[3].ParameterType)!,Activator.CreateInstance(parameters[4].ParameterType)!,major==2,left});
-                    if(context.Calls.Count!=context.Outputs.Count||context.Calls.Distinct().Count()!=context.Outputs.Count)
+                    if(!context.Calls.OrderBy(v=>v).SequenceEqual(context.Expected.OrderBy(v=>v)))
                         throw new InvalidDataException("Native rotation constructor changed Euler gate or call ownership");
                     parsed++;eulerCalls+=context.Calls.Count;
                     return(note,data);
                 }
                 finally{current=null;}
             }
-            var report=JObject.FromObject(NoteWorldRotationCompositionChecks.Run(gameRoot,Parse));
+            var report=JObject.FromObject(NoteWorldRotationCompositionChecks.Run(gameRoot,Parse,capture?.Worlds(mode.Scalar),capture?.Locals()));
             failed+=(int)report["failed"]!;results.Add(new{major,scalarWorld=mode.Scalar,composition=report});
             foreach(bool left in new[]{false,true})
             {
@@ -141,7 +144,8 @@ static class NoodleRotationConstructorChecks
                 throw new InvalidDataException("Constructor rotation state leaked after rejected metadata");
             recoveryControls++;
         }
-        return new{cases=parsed,failed,eulerCalls,eulerSites,readerEulerSites,baseSites,negativeControls,recoveryControls,failureSinkCalls,constructorAudits,results,contextCleared=current==null,
-            scope="Actual custom JSON v2/v3 parsing and color-note conversion, emitted complete native NoodleNoteData/base constructor chain and NoteInit rotation prefix; no backing-field injection. Euler receives exact source argument controls and returns explicitly supplied opaque quaternions. Failure logging is a throwing host sink, checked with malformed input and recovery controls. Unity Euler numerics, runtime delegate registration, Transform and full scene/player pose are not executed; no production admission."};
+        return new{cases=parsed,failed,eulerCalls,eulerSites,readerEulerSites,baseSites,negativeControls,recoveryControls,failureSinkCalls,
+            eulerOrigin=capture==null?"opaque-control":"captured-native-samples",unity=capture?.Unity,constructorAudits,results,contextCleared=current==null,
+            scope="Actual custom JSON v2/v3 parsing and color-note conversion, emitted complete native NoodleNoteData/base constructor chain and NoteInit rotation prefix; no backing-field injection. Euler receives exact source argument controls; eulerOrigin distinguishes opaque controls from replayed native samples captured in game. Failure logging is a throwing host sink, checked with malformed input and recovery controls. Native Euler is not executed in this host; runtime delegate registration, Transform and full scene/player pose are not executed; no production admission."};
     }
 }

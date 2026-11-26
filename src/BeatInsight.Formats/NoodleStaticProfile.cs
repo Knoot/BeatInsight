@@ -82,7 +82,7 @@ internal static class NoodleStaticProfile
                 foreach(var item in array)
                 {
                     if(item is not JObject){Unsupported(item,"invalid custom event");return;}
-                    if((string?)(item["_type"]??item["t"])=="AssignPlayerToTrack")Unsupported(item,"player track transformation");
+                    if((string?)item[major==2?"_type":"t"]=="AssignPlayerToTrack")Unsupported(item,"player track transformation");
                 }
             }
             if(!IsEmptyTrackValue(custom["environment"])||!IsEmptyTrackValue(custom["_environment"]))staticTracks=false;
@@ -94,6 +94,7 @@ internal static class NoodleStaticProfile
                 if(fake=="fakeBurstSliders"&&fakes.Count>0)Unsupported(fakes,"fake burst sliders require a dedicated row-processing profile");
             }
         }
+        var isolatedVisualTracks=staticTracks?new HashSet<string>(StringComparer.Ordinal):NoodleIsolatedVisualTracks.Read(root,major,notes);
         var collections=new List<string>();
         if(notes)collections.AddRange(major==2?new[]{"_notes","_sliders"}:new[]{"colorNotes","bombNotes","sliders","burstSliders"});
         if(walls)collections.Add(major==2?"_obstacles":"obstacles");
@@ -234,7 +235,7 @@ internal static class NoodleStaticProfile
                     else if(wall&&key==(old?"_customData":"customData")&&(property.Name==(old?"_position":"coordinates")||property.Name==(old?"_scale":"size")||property.Name==(old?"_localRotation":"localRotation")||property.Name==(old?"_rotation":"worldRotation")))continue;
                     else if(key==(old?"_customData":"customData")&&property.Name==TrackKey(old))
                     {
-                        ValidateTrackAssignment(property.Value,staticTracks);
+                        ValidateTrackAssignment(property.Value,staticTracks||NoodleIsolatedVisualTracks.Contains(property.Value,isolatedVisualTracks));
                         if(NoodleNominalTracks.Assigned(property.Value,nominalTracks)
                             &&(major!=3||fakeObject||!(name=="bombNotes"||name=="colorNotes"&&((int?)item["c"]??0) is 0 or 1)))
                             Unsupported(property.Value,"nominal path geometry is validated only for ordinary real notes and bombs");

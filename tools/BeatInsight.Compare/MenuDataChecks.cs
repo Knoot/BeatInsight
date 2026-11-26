@@ -9,12 +9,16 @@ static class MenuDataChecks
 {
     public static object Run(OriginalOracle oracle,string gameRoot,string mapsRoot,string manifest)
     {
-        var results=new List<object>();int failed=0,selectiveCases=0;
+        var results=new List<object>();var skipped=new List<object>();int failed=0,selectiveCases=0;
         foreach(var row in JObject.Parse(File.ReadAllText(manifest))["maps"]!)
         {
             string folder=Path.Combine(mapsRoot,(string)row["Folder"]!);
-            var test=LocalMap.Cases(folder).Single(c=>c.Characteristic==(string?)row["Characteristic"]&&c.Difficulty==(string?)row["Difficulty"]&&
+            if(!Directory.Exists(folder)||!Directory.EnumerateFiles(folder).Any(f=>Path.GetFileName(f).Equals("Info.dat",StringComparison.OrdinalIgnoreCase)))
+            {skipped.Add(new{map=(string?)row["Folder"],reason="source-missing"});continue;}
+            var test=LocalMap.Cases(folder).SingleOrDefault(c=>c.Characteristic==(string?)row["Characteristic"]&&c.Difficulty==(string?)row["Difficulty"]&&
                 (row["File"]==null||c.File==(string?)row["File"]));
+            if(test==null||!File.Exists(LocalMap.SafePath(folder,test.File)))
+            {skipped.Add(new{map=(string?)row["Folder"],reason="selected-file-missing"});continue;}
             int rank=Array.IndexOf(new[]{"Easy","Normal","Hard","Expert","ExpertPlus"},test.Difficulty);
             var request=new SelectedMapRequest("synthetic-menu-identity-"+results.Count,test.Characteristic,test.Difficulty,rank,LocalMap.SafePath(folder,test.File));
             var snapshot=SelectedMapAnalyzer.Load(request,CancellationToken.None);
@@ -62,6 +66,6 @@ static class MenuDataChecks
         var orientation=OrientationChecks.Run(gameRoot,out int orientationFailures);
         if(orientationFailures>0)failed++;
         return new {schemaVersion=1,profileVersion=BeatInsight.Formats.LocalMap.AnalysisProfileVersion,scope="menu data pipeline; map outputs compared with original IL; history tested separately on synthetic fixtures",
-            cases=results.Count,selectiveCases,failed,gameStarted=false,userHistoryRead=false,results,orientation};
+            cases=results.Count,selectiveCases,failed,skipped,gameStarted=false,userHistoryRead=false,results,orientation};
     }
 }

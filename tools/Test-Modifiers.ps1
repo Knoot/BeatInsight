@@ -4,12 +4,13 @@ param([string]$GameRoot,[string]$MapsRoot,[string]$OutputDirectory)
 $ErrorActionPreference='Stop'
 $workspace=Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'LocalSettings.ps1')
+$previousArtifactRoot=$env:BEATINSIGHT_LOCAL_ROOT
+try {
+$env:BEATINSIGHT_LOCAL_ROOT=Get-BeatInsightLocalRoot
 $GameRoot=Get-BeatInsightSetting GameRoot $GameRoot
 $MapsRoot=Get-BeatInsightSetting MapsRoot $MapsRoot
-if(!$OutputDirectory){$OutputDirectory=Join-Path $workspace ('.local/modifiers/'+(Get-Date -Format 'yyyyMMdd-HHmmss'))}
-$OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
-$prefix=[IO.Path]::GetFullPath($workspace).TrimEnd('\')+'\'
-if(!$OutputDirectory.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'OutputDirectory must stay inside the workspace.'}
+if(!$OutputDirectory){$OutputDirectory=Join-Path (Get-BeatInsightLocalRoot) ('modifiers/'+(Get-Date -Format 'yyyyMMdd-HHmmss'))}
+$OutputDirectory=Resolve-BeatInsightOutputDirectory $OutputDirectory
 if(Test-Path -LiteralPath $OutputDirectory){throw 'Choose a new output directory.'}
 New-Item -ItemType Directory -Path $OutputDirectory|Out-Null
 $artifacts=Join-Path $OutputDirectory '.build'
@@ -22,3 +23,5 @@ if($LASTEXITCODE){throw "Modifier checks failed; inspect $report and stderr."}
 $summary=Get-Content -LiteralPath $report -Raw|ConvertFrom-Json
 Write-Host "Maps: $($summary.maps); cases: $($summary.cases); failed: $($summary.failed)"
 Write-Host "Report: $report"
+
+} finally { $env:BEATINSIGHT_LOCAL_ROOT=$previousArtifactRoot }

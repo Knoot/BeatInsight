@@ -9,7 +9,7 @@ static class IndependentArcDensityChecks
 {
     internal static object Run(string gameRoot,Func<JObject,float,BeatmapData> load,string? inventory=null)
     {
-        string folder=Path.Combine(".local","density-arc-native-fixtures",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(folder);
+        string folder=BeatInsight.Tooling.LocalArtifacts.PathFor("density-arc-native-fixtures",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(folder);
         File.WriteAllText(Path.Combine(folder,"Info.dat"),"""{"version":"4.0.1","audio":{"bpm":120,"songDuration":12},"difficultyBeatmaps":[{"characteristic":"Standard","difficulty":"Expert","beatmapDataFilename":"map.dat","customData":{"requirements":["Noodle Extensions"]}}]}""");
         int cases=0,failed=0,chainProjections=0,loadedMaps=0,nativeRejected=0;var results=new List<object>();
         MapNote[] Prepared(JObject root,float bpm=120)

@@ -18,6 +18,20 @@ try {
     $plugin=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $PackageDirectory 'Plugins/BeatInsight.dll'),$readerParameters);$modules.Add($plugin)
     $main=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $GameRoot 'Beat Saber_Data/Managed/Main.dll'));$modules.Add($main)
     $dataModels=[Mono.Cecil.ModuleDefinition]::ReadModule((Join-Path $GameRoot 'Beat Saber_Data/Managed/DataModels.dll'));$modules.Add($dataModels)
+    # Bundled documents are read through the public game provider on the main
+    # thread; guard every additional API before staging the package.
+    $provider=$dataModels.Types|Where-Object Name -eq 'IBeatmapLevelData'
+    $readMap=@($provider.Methods|Where-Object {$_.Name -eq 'GetBeatmapString' -and $_.IsPublic -and $_.ReturnType.FullName -eq 'System.String' -and $_.Parameters.Count -eq 1})
+    if($readMap.Count -ne 1 -or $readMap[0].Parameters[0].ParameterType.FullName -notlike 'BeatmapKey&*'){throw 'Bundled beatmap document API changed.'}
+    if(@($provider.Methods|Where-Object {$_.Name -eq 'GetAudioDataString' -and $_.IsPublic -and $_.Parameters.Count -eq 0 -and $_.ReturnType.FullName -eq 'System.String'}).Count -ne 1){throw 'Bundled audio document API changed.'}
+    $bundled=$dataModels.Types|Where-Object Name -eq 'BeatmapLevelDataSO'
+    if(@($bundled.Methods|Where-Object {$_.Name -eq 'get_songAudioClip' -and $_.IsPublic -and $_.ReturnType.FullName -eq 'UnityEngine.AudioClip'}).Count -ne 1){throw 'Bundled audio clip API changed.'}
+    $levels=$dataModels.Types|Where-Object Name -eq 'BeatmapLevelsModel'
+    if(@($levels.Methods|Where-Object {$_.Name -eq 'GetBeatmapLevel' -and $_.IsPublic -and $_.Parameters.Count -eq 1 -and $_.Parameters[0].ParameterType.FullName -eq 'System.String' -and $_.ReturnType.FullName -eq 'BeatmapLevel'}).Count -ne 1){throw 'Bundled level lookup API changed.'}
+    $level=$dataModels.Types|Where-Object Name -eq 'BeatmapLevel'
+    foreach($field in @('beatsPerMinute','songDuration','songTimeOffset')){
+        if(@($level.Fields|Where-Object {$_.Name -eq $field -and $_.IsPublic -and $_.FieldType.FullName -eq 'System.Single'}).Count -ne 1){throw 'Bundled level metadata API changed.'}
+    }
     $resources=@($plugin.Resources|Where-Object Name -like '*.manifest.json')
     if($resources.Count -ne 1){throw 'Expected one embedded BSIPA manifest.'}
     $reader=[IO.StreamReader]::new($resources[0].GetResourceStream())
@@ -99,6 +113,61 @@ try {
        ($settingsRegister.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.Name -eq 'get_Instance'})){throw 'Settings registration must use the initializing BSML instance.'}
     $diagnostics=$plugin.Types|Where-Object FullName -eq 'BeatInsight.Mod.RuntimeDiagnostics'
     if(!$diagnostics){throw 'Runtime diagnostics must be packaged.'}
+    $rotationProbe=$diagnostics.Methods|Where-Object Name -eq 'CaptureRotationMath'
+    if(!$rotationProbe){throw 'Bounded Unity rotation diagnostics must be packaged.'}
+    $probeCallers=@($diagnostics.Methods|Where-Object {$_.HasBody -and ($_.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.Name -eq 'CaptureRotationMath'})})
+    if($probeCallers.Count -ne 1 -or $probeCallers[0].Name -ne 'Enable'){throw 'Rotation math diagnostics must run only at diagnostics enable.'}
+    $probeCalls=@($rotationProbe.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference]})
+    $probeGate=$probeCalls|Where-Object {$_.Operand.Name -eq 'get_CanRecord'}|Select-Object -First 1
+    $probeEuler=@($probeCalls|Where-Object {$_.Operand.DeclaringType.FullName -eq 'UnityEngine.Quaternion' -and $_.Operand.Name -eq 'Euler'})
+    if(!$probeGate -or $probeEuler.Count -ne 2 -or $probeGate.Offset -gt $probeEuler[0].Offset){throw 'Rotation math diagnostics must be opt-in before native math calls.'}
+    $probeArrays=@($rotationProbe.Body.Instructions|Where-Object {$_.OpCode.Name -eq 'newarr' -and $_.Operand.FullName -eq 'UnityEngine.Vector3'})
+    if($probeArrays.Count -ne 1 -or $probeArrays[0].Previous.OpCode.Name -ne 'ldc.i4.s' -or [int]$probeArrays[0].Previous.Operand -ne 24){throw 'Rotation math diagnostics must retain the bounded 24-input matrix.'}
+    if($probeCalls|Where-Object {$_.Operand.DeclaringType.FullName -eq 'UnityEngine.Transform'}){throw 'Rotation math diagnostics must not touch scene transforms.'}
+    $noteObserver=$diagnostics.Methods|Where-Object Name -eq 'NoteInitialized'
+    if(!$noteObserver -or !$noteObserver.IsStatic -or $noteObserver.ReturnType.FullName -ne 'System.Void' -or
+       $noteObserver.Parameters.Count -ne 1 -or $noteObserver.Parameters[0].Name -ne '__instance' -or $noteObserver.Parameters[0].ParameterType.FullName -ne 'NoteController'){
+        throw 'Note diagnostics require a typed observational postfix without argument arrays.'
+    }
+    if(($diagnostics.Fields|Where-Object Name -eq 'NoteSampleLimit').Constant -ne 3 -or
+       ($diagnostics.Fields|Where-Object Name -eq 'NotePoseLimit').Constant -ne 12){throw 'Note pose diagnostics must remain bounded to three notes and twelve snapshots.'}
+    $noteGate=$noteObserver.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.Name -eq 'get_CanRecord'}|Select-Object -First 1
+    $noteBudget=$noteObserver.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.FieldReference] -and $_.Operand.Name -eq 'noteSamples'}|Select-Object -First 1
+    $noteAllocation=$noteObserver.Body.Instructions|Where-Object {$_.OpCode.Name -in @('newobj','newarr')}|Select-Object -First 1
+    if(!$noteGate -or !$noteBudget -or !$noteAllocation -or $noteGate.Offset -gt $noteAllocation.Offset -or $noteBudget.Offset -gt $noteAllocation.Offset){throw 'Note observer must check opt-in and budget before allocations.'}
+    $noteReferences=$diagnostics.Fields|Where-Object Name -eq 'sampledNotes'
+    if(!$noteReferences.FieldType.FullName.Contains('System.WeakReference`1<NoteController>') -or !$noteReferences.FieldType.FullName.Contains('System.WeakReference`1<NoteData>')){throw 'Note diagnostics must retain only weak controller/data identities.'}
+    $poseRecorder=$diagnostics.Methods|Where-Object Name -eq 'RecordNotePose'
+    $poseGate=$poseRecorder.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.Name -eq 'get_CanRecord'}|Select-Object -First 1
+    $poseBudget=$poseRecorder.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.FieldReference] -and $_.Operand.Name -eq 'notePoseSamples'}|Select-Object -First 1
+    $poseSnapshot=$poseRecorder.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.Name -eq 'NoteSnapshot'}|Select-Object -First 1
+    if(!$poseGate -or !$poseBudget -or !$poseSnapshot -or $poseGate.Offset -gt $poseSnapshot.Offset -or $poseBudget.Offset -gt $poseSnapshot.Offset){throw 'Detailed note pose reads must follow opt-in and snapshot budget checks.'}
+    $noteSamplers=@($diagnostics.Methods|Where-Object {$_.HasBody -and ($_.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.Name -eq 'SampleNotes'})})
+    if($noteSamplers.Count -ne 1 -or $noteSamplers[0].Name -ne 'TakeSample'){throw 'Note follow-up snapshots must reuse existing event-driven sampling.'}
+    $noteReset=$diagnostics.Methods|Where-Object Name -eq 'ResetSamples'
+    foreach($field in @('sampledNotes','noteSamples','notePoseSamples','rowPatchesSampled')){
+        if(!($noteReset.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.FieldReference] -and $_.Operand.Name -eq $field})){throw 'Note diagnostic references and budgets must reset with attempt/disposal.'}
+    }
+    $rowCapture=$diagnostics.Methods|Where-Object Name -eq 'CaptureRowPatches'
+    $rowCallers=@($diagnostics.Methods|Where-Object {$_.HasBody -and ($_.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.Name -eq 'CaptureRowPatches'})})
+    if($rowCallers.Count -ne 1 -or $rowCallers[0].Name -ne 'SongStart'){throw 'Row patch inspection must run only before music starts.'}
+    $rowGate=$rowCapture.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.Name -eq 'get_CanRecord'}|Select-Object -First 1
+    $rowBudget=$rowCapture.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.FieldReference] -and $_.Operand.Name -eq 'rowPatchesSampled'}|Select-Object -First 1
+    $rowRead=$rowCapture.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.Name -eq 'GetPatchInfo'}|Select-Object -First 1
+    if(!$rowGate -or !$rowBudget -or !$rowRead -or $rowGate.Offset -gt $rowRead.Offset -or $rowBudget.Offset -gt $rowRead.Offset){throw 'Row patch metadata must follow opt-in and once-per-attempt gates.'}
+    if($rowCapture.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.Name -in @('Patch','Unpatch','Invoke','StartCoroutine','Delay')}){throw 'Row patch diagnostics must only observe registration metadata.'}
+    foreach($owner in @('NoteInitialized','RecordNotePose','SampleNotes','NoteSnapshot','NoteBoxes','NoteMetadata')){
+        $method=$diagnostics.Methods|Where-Object Name -eq $owner
+        foreach($instruction in $method.Body.Instructions){
+            if($instruction.Operand -isnot [Mono.Cecil.MethodReference]){continue}
+            $call=$instruction.Operand
+            if($call.Name -in @('StartCoroutine','AddComponent','SetActive','Instantiate','Destroy','SetParent','Delay','SetScale') -or
+               $call.Name.StartsWith('set_') -and $call.DeclaringType.FullName -like 'UnityEngine.*' -or
+               $call.Name -eq '.ctor' -and $call.DeclaringType.FullName -like 'UnityEngine.*'){
+                throw 'Note pose diagnostics must not mutate/create scene objects or add scheduling.'
+            }
+        }
+    }
     $diagnosticRead=$diagnostics.Methods|Where-Object Name -eq 'Read'
     if($diagnosticRead.Body.Instructions|Where-Object {$_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq 'HarmonyLib.AccessTools'}){throw 'Optional diagnostic member lookup must not generate Harmony warnings.'}
     $dynamicHooks=[Collections.Generic.List[object]]::new()
@@ -121,7 +190,7 @@ try {
         if($targets[0].ReturnType.FullName -ne 'System.Void' -and $targets[0].IsStatic){throw 'Non-void static diagnostic boundary needs a distinct adapter.'}
         $dynamicHooks.Add(@{assembly=$assemblyName;type=$typeName;method=$methodName})
     }
-    if($dynamicHooks.Count -lt 11){throw 'Expected required scene/room diagnostic boundaries.'}
+    if($dynamicHooks.Count -lt 12 -or @($dynamicHooks|Where-Object {$_.type -eq 'NoteController' -and $_.method -eq 'Init'}).Count -ne 1){throw 'Expected required scene/room and typed note diagnostic boundaries.'}
     foreach($name in @('Before','After','BeforeStatic','AfterStatic','AfterResult')){
         $adapter=$diagnostics.Methods|Where-Object Name -eq $name
         if($adapter.ReturnType.FullName -ne 'System.Void' -or !$adapter.IsStatic){throw 'Diagnostic adapter must be an observational void method.'}

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "maps": [
+    {"Folder": "3a821 (Yellow - RateGyro)", "Characteristic": "Standard", "Difficulty": "Normal", "File": "NormalStandard.dat"},
+    {"Folder": "3a821 (Yellow - RateGyro)", "Characteristic": "Standard", "Difficulty": "Expert", "File": "ExpertStandard.dat"},
+    {"Folder": "3a821 (Yellow - RateGyro)", "Characteristic": "Standard", "Difficulty": "ExpertPlus", "File": "ExpertPlusStandard.dat"},
+    {"Folder": "3a821 (Yellow - RateGyro)", "Characteristic": "Lawless", "Difficulty": "ExpertPlus", "File": "ExpertPlusLawless.dat"}
+  ]
+}

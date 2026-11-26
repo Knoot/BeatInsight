@@ -7,7 +7,14 @@ using System.Security.Cryptography;
 
 try
 {
+    if(args.Length==1&&args[0]=="--local-artifacts-root"){Console.WriteLine(BeatInsight.Tooling.LocalArtifacts.Root);return 0;}
     if(args.Length==1&&args[0]=="--profile-version"){Console.WriteLine(LocalMap.AnalysisProfileVersion);return 0;}
+    if(args.Length==2&&args[0]=="--check-ordinary-warning-cost")
+    {
+        var report=OrdinaryWarningCostChecks.Run();
+        File.WriteAllText(args[1],JsonConvert.SerializeObject(report,Formatting.Indented));
+        return (int)JObject.FromObject(report)["failed"]! ==0?0:2;
+    }
     if((args.Length==4||args.Length==5)&&args[0]=="--check-noodle-metric-coverage")
     {
         var jump=args.Length==5?JsonConvert.DeserializeObject<JumpSettingsSnapshot>(File.ReadAllText(args[4])):null;
@@ -43,12 +50,64 @@ try
     }
     if(args.Length == 0) throw new ArgumentException("Supply gameRoot as the first argument.");
     string gameRoot = Path.GetFullPath(args[0]);
-    if(args.Length>1&&args[1] is "--check-noodle-installer" or "--check-native-field-accessors" or "--check-heck-native-accessors" or "--check-heck-native-chains")NativeFieldAccessorChecks.Initialize(gameRoot);
-    MappingNativeRuntime.Initialize(gameRoot,args.Length>1&&args[1] is "--check-noodle-copy-mirror" or "--check-noodle-custom-loader" or "--check-noodle-row-loader" or "--check-noodle-arc-density" or "--check-noodle-admitted-arcs" or "--check-noodle-admitted-chains" or "--check-noodle-row-copy" or "--check-noodle-copy-chains" or "--check-heck-map" or "--check-heck-copy" or "--check-heck-native-accessors" or "--check-heck-chains" or "--check-heck-native-chains",
-        args.Length>1&&args[1] is "--check-noodle-row-loader" or "--check-noodle-arc-density" or "--check-noodle-admitted-arcs" or "--check-noodle-admitted-chains" or "--check-noodle-row-copy" or "--check-noodle-copy-chains" or "--check-heck-map" or "--check-heck-copy" or "--check-heck-native-accessors" or "--check-heck-chains" or "--check-heck-native-chains",
+    if(args.Length>1&&args[1] is "--audit-noodle-global-chain-rows" or "--audit-noodle-global-rows" or "--check-noodle-combined-density" or "--check-noodle-installer" or "--check-native-field-accessors" or "--check-heck-native-accessors" or "--check-heck-native-chains")NativeFieldAccessorChecks.Initialize(gameRoot);
+    bool visualTracks=args.Length>1&&args[1]=="--check-noodle-visual-tracks";
+    bool globalRows=args.Length>1&&args[1] is "--audit-noodle-global-rows" or "--audit-noodle-global-chain-rows";
+    MappingNativeRuntime.Initialize(gameRoot,globalRows||visualTracks||args.Length>1&&args[1] is "--check-noodle-copy-mirror" or "--check-noodle-custom-loader" or "--check-noodle-row-loader" or "--check-noodle-wall-intervals" or "--check-noodle-combined-density" or "--check-noodle-arc-density" or "--check-noodle-admitted-arcs" or "--check-noodle-admitted-chains" or "--check-noodle-row-copy" or "--check-noodle-copy-chains" or "--check-heck-map" or "--check-heck-copy" or "--check-heck-native-accessors" or "--check-heck-chains" or "--check-heck-native-chains",
+        globalRows||visualTracks||args.Length>1&&args[1] is "--check-noodle-row-loader" or "--check-noodle-wall-intervals" or "--check-noodle-combined-density" or "--check-noodle-arc-density" or "--check-noodle-admitted-arcs" or "--check-noodle-admitted-chains" or "--check-noodle-row-copy" or "--check-noodle-copy-chains" or "--check-heck-map" or "--check-heck-copy" or "--check-heck-native-accessors" or "--check-heck-chains" or "--check-heck-native-chains",
         args.Length>1&&args[1] is "--check-noodle-row-copy" or "--check-noodle-copy-chains" or "--check-heck-copy" or "--check-heck-native-accessors" or "--check-heck-chains" or "--check-heck-native-chains",
-        args.Length>1&&args[1] is "--check-heck-map" or "--check-heck-copy" or "--check-heck-native-accessors" or "--check-heck-chains" or "--check-heck-native-chains");
+        visualTracks||args.Length>1&&args[1] is "--check-heck-map" or "--check-heck-copy" or "--check-heck-native-accessors" or "--check-heck-chains" or "--check-heck-native-chains");
     var oracle = new OriginalOracle(gameRoot);
+    if(args.Length==4&&args[1]=="--audit-noodle-global-chain-rows")
+    {
+        var report=NoodleCustomLoaderChecks.Run(gameRoot,noodleRows:true,globalRowsInventory:args[3],globalChainRows:true);
+        File.WriteAllText(args[2],JsonConvert.SerializeObject(report,Formatting.Indented));
+        return JObject.FromObject(report)["failed"]!.Value<int>()==0?0:2;
+    }
+    if(args.Length==4&&args[1]=="--audit-noodle-global-rows")
+    {
+        var report=NoodleCustomLoaderChecks.Run(gameRoot,noodleRows:true,globalRowsInventory:args[3]);
+        File.WriteAllText(args[2],JsonConvert.SerializeObject(report,Formatting.Indented));
+        return JObject.FromObject(report)["failed"]!.Value<int>()==0?0:2;
+    }
+    if(args.Length is 3 or 4&&args[1]=="--check-noodle-empty-walls")
+    {
+        var report=NoodleEmptyWallChecks.Run(gameRoot,args.Length==4?args[3]:null);
+        File.WriteAllText(args[2],JsonConvert.SerializeObject(report,Formatting.Indented));
+        return JObject.FromObject(report)["failed"]!.Value<int>()==0?0:2;
+    }
+    if(args.Length==3&&args[1]=="--check-noodle-format-routing")
+    {
+        var report=NoodleFormatRoutingChecks.Run(gameRoot);
+        File.WriteAllText(args[2],JsonConvert.SerializeObject(report,Formatting.Indented));
+        return JObject.FromObject(report)["failed"]!.Value<int>()==0?0:2;
+    }
+    if(args.Length==4&&args[1]=="--check-note-diagnostics")
+    {
+        var report=NoteDiagnosticCostChecks.Run(gameRoot,args[2]);
+        File.WriteAllText(args[3],JsonConvert.SerializeObject(report,Formatting.Indented));
+        return JObject.FromObject(report)["failed"]!.Value<int>()==0?0:2;
+    }
+
+    if(args.Length==4&&args[1]=="--check-noodle-visual-tracks")
+    {
+        var report=NoodleCustomLoaderChecks.Run(gameRoot,noodleRows:true,heckMap:true,visualInventory:args[3]);
+        File.WriteAllText(args[2],JsonConvert.SerializeObject(report,Formatting.Indented));
+        return JObject.FromObject(report)["failed"]!.Value<int>()==0?0:2;
+    }
+
+    if(args.Length==3&&args[1]=="--check-noodle-wall-intervals")
+    {
+        var report=NoodleCustomLoaderChecks.Run(gameRoot,noodleRows:true,wallIntervals:true);
+        File.WriteAllText(args[2],JsonConvert.SerializeObject(report,Formatting.Indented));
+        return JObject.FromObject(report)["failed"]!.Value<int>()==0?0:2;
+    }
+    if(args.Length is 3 or 4&&args[1]=="--check-noodle-combined-density")
+    {
+        var report=NoodleCustomLoaderChecks.Run(gameRoot,inventory:args.Length==4?args[3]:null,noodleRows:true,combinedDensity:true);
+        File.WriteAllText(args[2],JsonConvert.SerializeObject(report,Formatting.Indented));
+        return JObject.FromObject(report)["failed"]!.Value<int>()==0?0:2;
+    }
     if(args.Length is 3 or 4&&args[1]=="--check-noodle-arc-density")
     {
         var report=NoodleCustomLoaderChecks.Run(gameRoot,inventory:args.Length==4?args[3]:null,noodleRows:true,independentArcDensity:true);
@@ -72,6 +131,12 @@ try
         var report=HeckRegistrarChecks.Run(gameRoot);
         File.WriteAllText(args[2],JsonConvert.SerializeObject(report,Formatting.Indented));
         return JObject.FromObject(report)["failed"]!.Value<int>()==0?0:2;
+    }
+    if(args.Length==3&&args[1]=="--check-ordinary-warning-timing")
+    {
+        var report=OrdinaryWarningTimingChecks.Run(gameRoot);
+        File.WriteAllText(args[2],JsonConvert.SerializeObject(report,Formatting.Indented));
+        return (int)JObject.FromObject(report)["failed"]! ==0?0:2;
     }
     if((args.Length==3||args.Length==4)&&args[1]=="--check-vanilla-walls")
     {

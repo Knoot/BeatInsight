@@ -26,6 +26,7 @@ internal static class RuntimeCapture
     static readonly Dictionary<StandardLevelGameplayManager,(Action Failure,Action ZeroEnergy,GameEnergyCounter Energy,AudioTimeSyncController Clock,long DiagnosticId)> subscriptions=new();
     static readonly object writerLock=new object();
     static Task pendingWrite=Task.CompletedTask;
+    internal static bool HasActiveAttempt=>enabled&&current!=null;
     internal static event Action? HistoryWritten;
     static ConditionalWeakTable<LevelCompletionResults,object> finishedResults=new ConditionalWeakTable<LevelCompletionResults,object>();
 

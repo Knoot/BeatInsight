@@ -4,10 +4,12 @@ param([string]$OutputDirectory)
 $ErrorActionPreference='Stop'
 $workspace=Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'LocalSettings.ps1')
+$previousArtifactRoot=$env:BEATINSIGHT_LOCAL_ROOT
+try {
+$env:BEATINSIGHT_LOCAL_ROOT=Get-BeatInsightLocalRoot
 . (Join-Path $PSScriptRoot 'MapInventory.ps1')
-if(!$OutputDirectory){$OutputDirectory=Join-Path $workspace ('.local/map-selection/'+[Guid]::NewGuid().ToString('N'))}
-$OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
-if(!$OutputDirectory.StartsWith(([IO.Path]::GetFullPath($workspace).TrimEnd('\')+'\'),[StringComparison]::OrdinalIgnoreCase)){throw 'OutputDirectory must stay inside the workspace.'}
+if(!$OutputDirectory){$OutputDirectory=Join-Path (Get-BeatInsightLocalRoot) ('map-selection/'+[Guid]::NewGuid().ToString('N'))}
+$OutputDirectory=Resolve-BeatInsightOutputDirectory $OutputDirectory
 if(Test-Path -LiteralPath $OutputDirectory){throw 'Choose a new output directory.'}
 New-Item -ItemType Directory -Path $OutputDirectory|Out-Null
 $artifacts=Join-Path $OutputDirectory '.build'
@@ -79,3 +81,5 @@ Assert-Selection ($v2.exitCode -eq 0 -and ($v2.stdout|ConvertFrom-Json).selectio
 $report=@{checks=$selectionChecks;status='pass';gameStarted=$false;userHistoryRead=$false;scope='CLI selection and inventory diagnostics on synthetic maps/history'}
 $report|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $OutputDirectory 'checks.json')
 Write-Host "Passed $selectionChecks CLI/inventory checks."
+
+} finally { $env:BEATINSIGHT_LOCAL_ROOT=$previousArtifactRoot }

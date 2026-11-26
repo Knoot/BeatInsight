@@ -24,8 +24,9 @@ internal sealed class PreparedSlider
 // overlap is geometric (not color-dependent), and head operations retain their order.
 internal static class NotePreparation
 {
-    public static MapNote[] Prepare(List<MapNote> notes, List<MapNote> bombs, List<PreparedSlider> arcs, List<PreparedSlider> chains, bool chainsBeforeArcs = false,bool prepareOrientation=true)
+    public static MapNote[] Prepare(List<MapNote> notes, List<MapNote> bombs, List<PreparedSlider> arcs, List<PreparedSlider> chains, bool chainsBeforeArcs = false,bool prepareOrientation=true,bool preserveRawArcRoles=false)
     {
+        if(preserveRawArcRoles&&chains.Count!=0)throw new NotSupportedException("Combined raw arc roles do not cover chains");
         if(prepareOrientation)NoteOrientation.Prepare(notes);
         var sources=new List<object>[] {notes.Cast<object>().ToList(),bombs.Cast<object>().ToList(),arcs.Cast<object>().ToList(),chains.Cast<object>().ToList()};
         if(chainsBeforeArcs){var source=sources[2];sources[2]=sources[3];sources[3]=source;}
@@ -53,21 +54,35 @@ internal static class NotePreparation
         float Time(object item)=>item is MapNote n?n.Time:((PreparedSlider)item).Head.Time;
         var rowNotes=new List<MapNote>();var rowHeads=new List<PreparedSlider>();
         var rowTails=new List<PreparedSlider>();var pendingTails=new List<PreparedSlider>();
-        var chainGameplay=new HashSet<MapNote>();var arcHeads=new HashSet<MapNote>();
+        var chainGameplay=new HashSet<MapNote>();var arcHeads=new HashSet<MapNote>();HashSet<MapNote>? arcTails=preserveRawArcRoles?new HashSet<MapNote>():null;
+        HashSet<(int X,int Y)>? rawPoints=preserveRawArcRoles?new HashSet<(int,int)>():null;
         float rowStart=0;
+        void MarkHead(MapNote note)
+        {arcHeads.Add(note);note.ScoringType=arcTails?.Contains(note)==true?6:2;}
+        void MarkTail(MapNote note)
+        {arcTails?.Add(note);note.ScoringType=chainGameplay.Contains(note)?7:arcHeads.Contains(note)?6:3;}
         void FinishRow()
         {
+            // The composed row body can retain vanilla roles before the custom
+            // postfix adds its own overlaps. Neither pass clears arc flags.
+            if(preserveRawArcRoles)
+            {
+                rawPoints!.Clear();foreach(var slider in rowHeads)rawPoints.Add((slider.Head.X,slider.Head.Y));
+                foreach(var note in rowNotes)if(rawPoints.Contains((note.X,note.Y)))MarkHead(note);
+                rawPoints.Clear();foreach(var slider in rowTails)rawPoints.Add((slider.TailX,slider.TailY));
+                foreach(var note in rowNotes)if(rawPoints.Contains((note.X,note.Y)))MarkTail(note);
+            }
             foreach(var slider in rowHeads)
                 foreach(var note in rowNotes)
                     if(NoodleGeometry.Same(note,slider.Head))
                     {
                         if(slider.Chain){chainGameplay.Add(note);note.ScoringType=4;if(slider.Noodle&&prepareOrientation)NoodleBurstPreparation.Tilt(note,slider);}
-                        else {arcHeads.Add(note);note.ScoringType=2;}
+                        else MarkHead(note);
                     }
             foreach(var slider in rowTails)
                 foreach(var note in rowNotes)
                     if(NoodleGeometry.Same(note,slider.TailX,slider.TailY,slider.NoodleTailX,slider.NoodleTailY))
-                        note.ScoringType=chainGameplay.Contains(note)?7:arcHeads.Contains(note)?6:3;
+                        MarkTail(note);
             rowNotes.Clear();rowHeads.Clear();rowTails.Clear();
         }
         while(true)

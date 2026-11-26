@@ -10,7 +10,7 @@ using BeatInsight.WallAlert;
 
 namespace BeatInsight.Formats;
 
-// Primitive snapshot only: no Unity objects cross into the worker.
+// Immutable source snapshot only: no Unity objects cross into the worker.
 public sealed class SelectedMapRequest
 {
     public string LevelId {get;}
@@ -24,11 +24,13 @@ public sealed class SelectedMapRequest
     public AnalysisFeatures Features {get;}
     public JumpSettingsSnapshot? JumpSettings {get;}
     public bool PreserveExtendedWallLayers {get;}
+    public MapDocuments? Documents {get;}
     public SelectedMapRequest(string levelId,string characteristic,string difficulty,int difficultyRank,string beatmapFile,
-        string? legacyHistoryFile=null,string? ownHistoryFile=null,string? unavailableReason=null,AnalysisFeatures features=AnalysisFeatures.All,JumpSettingsSnapshot? jumpSettings=null,bool preserveExtendedWallLayers=false)
+        string? legacyHistoryFile=null,string? ownHistoryFile=null,string? unavailableReason=null,AnalysisFeatures features=AnalysisFeatures.All,JumpSettingsSnapshot? jumpSettings=null,bool preserveExtendedWallLayers=false,MapDocuments? documents=null)
     {
         LevelId=levelId;Characteristic=characteristic;Difficulty=difficulty;DifficultyRank=difficultyRank;BeatmapFile=beatmapFile;
         LegacyHistoryFile=legacyHistoryFile;OwnHistoryFile=ownHistoryFile;UnavailableReason=unavailableReason;
+        Documents=documents;
         PreserveExtendedWallLayers=(features&AnalysisFeatures.Squats)!=0&&preserveExtendedWallLayers;
         Features=features;JumpSettings=(features&AnalysisFeatures.Squats)!=0?jumpSettings:null;
     }
@@ -83,9 +85,12 @@ public static class SelectedMapAnalyzer
         bool Has(AnalysisFeatures feature)=>(features&feature)!=0;
         string key=PlayHistory.Key(request.LevelId,request.DifficultyRank,request.Characteristic);
         if(features==AnalysisFeatures.None)return new SelectedMapAnalysis {MapKey=key,Features=features};
-        var selected=LocalMap.CaseFromFile(request.BeatmapFile,request.Characteristic,request.Difficulty);
+        var selected=request.Documents==null?LocalMap.CaseFromFile(request.BeatmapFile,request.Characteristic,request.Difficulty):null;
+        LoadedMap ReadMap(AnalysisFeatures requested,bool includeSwingWindowWalls=true)=>request.Documents==null
+            ?LocalMap.Load(selected!,requested,includeSwingWindowWalls,request.JumpSettings)
+            :LocalMap.LoadDocuments(request.Documents,request.Characteristic,request.Difficulty,requested,includeSwingWindowWalls,request.JumpSettings);
         LoadedMap map;string? wallFailure=null,noteFailure=null,densityFailure=null;
-        try{map=LocalMap.Load(selected,features,jumpSettings:request.JumpSettings);}
+        try{map=ReadMap(features);}
         catch(NotSupportedException e) when(!Has(AnalysisFeatures.Reference))
         {
             token.ThrowIfCancellationRequested();
@@ -94,7 +99,7 @@ public static class SelectedMapAnalyzer
             // A second validated load still rejects unsupported note/player data.
             try
             {
-                map=LocalMap.Load(selected,features&~AnalysisFeatures.Squats,includeSwingWindowWalls:false,jumpSettings:request.JumpSettings);
+                map=ReadMap(features&~AnalysisFeatures.Squats,includeSwingWindowWalls:false);
                 if(Has(AnalysisFeatures.Squats))wallFailure=e.Message;
             }
             catch(NotSupportedException notesError) when(Has(AnalysisFeatures.Squats)||Has(AnalysisFeatures.Density))
@@ -102,11 +107,11 @@ public static class SelectedMapAnalyzer
                 token.ThrowIfCancellationRequested();
                 // Keep a separately validated wall result; never project unsupported notes.
                 var wallFeatures=(features&AnalysisFeatures.Squats)|((features&(AnalysisFeatures.OwnDeaths|AnalysisFeatures.Density))!=0?AnalysisFeatures.OwnDeaths:AnalysisFeatures.None);
-                try{map=LocalMap.Load(selected,wallFeatures,jumpSettings:request.JumpSettings);}
+                try{map=ReadMap(wallFeatures);}
                 catch(NotSupportedException wallError) when(Has(AnalysisFeatures.Density))
                 {
                     wallFailure=Has(AnalysisFeatures.Squats)?wallError.Message:null;
-                    map=LocalMap.Load(selected,AnalysisFeatures.OwnDeaths,jumpSettings:request.JumpSettings);
+                    map=ReadMap(AnalysisFeatures.OwnDeaths);
                 }
                 noteFailure=notesError.Message;
             }
@@ -128,7 +133,7 @@ public static class SelectedMapAnalyzer
         {
             try
             {
-                var density=LocalMap.Load(selected,AnalysisFeatures.Density,includeSwingWindowWalls:false);
+                var density=ReadMap(AnalysisFeatures.Density,includeSwingWindowWalls:false);
                 corrected=CompatibleAnalysis.Analyze(density.Input,reproduceKnownDefects:false,features:AnalysisFeatures.Density);
                 independentDensity=true;
             }

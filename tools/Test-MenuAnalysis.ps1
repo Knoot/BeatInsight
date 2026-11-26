@@ -4,14 +4,28 @@ param([string]$GameRoot,[string]$MapsRoot,[string]$OutputDirectory)
 $ErrorActionPreference='Stop'
 $workspace=Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'LocalSettings.ps1')
+$previousArtifactRoot=$env:BEATINSIGHT_LOCAL_ROOT
+try {
+$env:BEATINSIGHT_LOCAL_ROOT=Get-BeatInsightLocalRoot
 $GameRoot=Get-BeatInsightSetting GameRoot $GameRoot
 $MapsRoot=Get-BeatInsightSetting MapsRoot $MapsRoot $GameRoot
-if(!$OutputDirectory){$OutputDirectory=Join-Path $workspace ('.local/menu-validation/'+(Get-Date -Format 'yyyyMMdd-HHmmss'))}
-$OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
-$prefix=[IO.Path]::GetFullPath($workspace).TrimEnd('\')+'\'
-if(!$OutputDirectory.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'OutputDirectory must stay inside the workspace.'}
+if(!$OutputDirectory){$OutputDirectory=Join-Path (Get-BeatInsightLocalRoot) ('menu-validation/'+(Get-Date -Format 'yyyyMMdd-HHmmss'))}
+$OutputDirectory=Resolve-BeatInsightOutputDirectory $OutputDirectory
 if(Test-Path -LiteralPath $OutputDirectory){throw 'Choose a new output directory.'}
 New-Item -ItemType Directory -Path $OutputDirectory|Out-Null
+$missingManifestMaps=[Collections.Generic.List[object]]::new()
+function Get-AvailableManifestCases([string]$Name){
+    $manifest=Get-Content -LiteralPath (Join-Path $workspace "tests/$Name") -Raw|ConvertFrom-Json
+    foreach($selected in $manifest.maps){
+        $folder=Join-Path $MapsRoot $selected.Folder
+        if(Test-Path -LiteralPath (Join-Path $folder $selected.File) -PathType Leaf){
+            @{Folder=$folder;Characteristic=$selected.Characteristic;Difficulty=$selected.Difficulty;File=$selected.File}
+        }else{
+            $missingManifestMaps.Add(@{manifest=$Name;Folder=$selected.Folder;Characteristic=$selected.Characteristic;Difficulty=$selected.Difficulty;File=$selected.File})
+            Write-Host "Skipped missing map fixture: $($selected.Folder) / $($selected.Difficulty)"
+        }
+    }
+}
 $cache=Get-BeatInsightSetting NuGetPackageRoot
 foreach($project in @('BeatInsight.Checks','BeatInsight.MenuChecks','BeatInsight.MemoryChecks')){
     $extra=@();if($project -eq 'BeatInsight.MenuChecks'){$extra=@('--','--preview',(Join-Path $OutputDirectory 'ui-preview.svg'))}
@@ -22,6 +36,12 @@ foreach($project in @('BeatInsight.Checks','BeatInsight.MenuChecks','BeatInsight
 $artifacts=Join-Path $OutputDirectory '.oracle'
 & dotnet build (Join-Path $PSScriptRoot 'BeatInsight.Compare') --artifacts-path $artifacts --source $cache -p:NuGetAudit=false "-p:GameRoot=$GameRoot" --verbosity quiet
 if($LASTEXITCODE){throw 'Comparison build failed.'}
+& (Join-Path $PSScriptRoot 'Test-LocalArtifacts.ps1') -Binary (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll')
+
+& dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') --check-ordinary-warning-cost (Join-Path $OutputDirectory 'ordinary-warning-cost.json')
+if($LASTEXITCODE){throw 'Ordinary warning allocation/reset checks failed.'}
+& dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-ordinary-warning-timing (Join-Path $OutputDirectory 'ordinary-warning-timing.json')
+if($LASTEXITCODE){throw 'Loaded obstacle seconds/beat warning checks failed.'}
 & dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') --check-noodle-track-inventory (Join-Path $OutputDirectory 'noodle-track-inventory.json')
 if($LASTEXITCODE){throw 'Structural track dependency checks failed.'}
 & dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-vanilla-walls (Join-Path $OutputDirectory 'vanilla-walls.json')
@@ -30,6 +50,15 @@ if($LASTEXITCODE){throw 'Ordinary wall layer conversion/spawn checks failed.'}
 if($LASTEXITCODE){throw 'Installed row/copy/mirror composition checks failed.'}
 & dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-heck-map (Join-Path $OutputDirectory 'heck-map.json')
 if($LASTEXITCODE){throw 'Installed Heck map deserialization checks failed.'}
+$visualCases=Join-Path $OutputDirectory 'visual-track-cases'
+New-Item -ItemType Directory -Path $visualCases|Out-Null
+$visualIndex=0
+foreach($selected in @(Get-AvailableManifestCases 'noodle-visual-track-maps.json')){
+    @{status='visual-track-fixture';request=$selected} |
+        ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $visualCases ('{0:D3}.result.json' -f $visualIndex++)) -Encoding utf8NoBOM
+}
+& dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-noodle-visual-tracks (Join-Path $OutputDirectory 'noodle-visual-tracks.json') $visualCases
+if($LASTEXITCODE){throw 'Isolated visual note/arc track comparisons failed.'}
 & dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-heck-registrar (Join-Path $OutputDirectory 'heck-registrar.json')
 if($LASTEXITCODE){throw 'Installed registrar constructor/delegate/Dispose checks failed.'}
 & dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-native-field-accessors (Join-Path $OutputDirectory 'native-field-accessors.json')
@@ -53,6 +82,38 @@ if($LASTEXITCODE){throw 'Native movement attachment and custom data accessor mat
 if($LASTEXITCODE){throw 'Native accessor results differ from adapter baseline.'}
 & dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-noodle-row-loader (Join-Path $OutputDirectory 'noodle-row-loader.json')
 if($LASTEXITCODE){throw 'Installed custom loader and Noodle row composition checks failed.'}
+$emptyWallCases=Join-Path $OutputDirectory 'empty-wall-cases.json'
+$emptyWallRequests=@(Get-AvailableManifestCases 'noodle-empty-wall-maps.json')
+ConvertTo-Json -InputObject $emptyWallRequests -Depth 5|Set-Content -LiteralPath $emptyWallCases -Encoding utf8NoBOM
+& dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-noodle-empty-walls (Join-Path $OutputDirectory 'noodle-empty-walls.json') $emptyWallCases
+if($LASTEXITCODE){throw 'Independent empty wall counter checks failed.'}
+& dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-noodle-format-routing (Join-Path $OutputDirectory 'noodle-format-routing.json')
+if($LASTEXITCODE){throw 'Installed custom format routing boundary checks failed.'}
+& dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-noodle-wall-intervals (Join-Path $OutputDirectory 'noodle-wall-intervals.json')
+if($LASTEXITCODE){throw 'Native negative wall interval boundary checks failed.'}
+$combinedCases=Join-Path $OutputDirectory 'combined-density-cases.json'
+$combinedRequests=@(Get-AvailableManifestCases 'noodle-combined-density-maps.json')
+ConvertTo-Json -InputObject $combinedRequests -Depth 5|Set-Content -LiteralPath $combinedCases -Encoding utf8NoBOM
+& dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-noodle-combined-density (Join-Path $OutputDirectory 'noodle-combined-density.json') $combinedCases
+if ($LASTEXITCODE -ne 0) { throw 'Combined density checks failed' }
+$globalRowCases=Join-Path $OutputDirectory 'global-row-cases.json'
+$globalRowRequests=@(Get-AvailableManifestCases 'noodle-global-row-audit-maps.json')
+ConvertTo-Json -InputObject $globalRowRequests -Depth 5|Set-Content -LiteralPath $globalRowCases -Encoding utf8NoBOM
+if($globalRowRequests.Count){
+& dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --audit-noodle-global-rows (Join-Path $OutputDirectory 'noodle-global-rows.json') $globalRowCases
+if($LASTEXITCODE){throw 'Global row patch compositions changed observable note results.'}
+}else{
+    @{status='skipped';reason='No available source fixtures'}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $OutputDirectory 'noodle-global-rows.json') -Encoding utf8NoBOM
+}
+$globalChainCases=Join-Path $OutputDirectory 'global-chain-row-cases.json'
+$globalChainRequests=@(Get-AvailableManifestCases 'noodle-global-chain-row-maps.json')
+ConvertTo-Json -InputObject $globalChainRequests -Depth 5|Set-Content -LiteralPath $globalChainCases -Encoding utf8NoBOM
+if($globalChainRequests.Count){
+& dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --audit-noodle-global-chain-rows (Join-Path $OutputDirectory 'noodle-global-chain-rows.json') $globalChainCases
+if($LASTEXITCODE){throw 'Global chain row compositions changed nominal groups or observable metrics.'}
+}else{
+    @{status='skipped';reason='No available source fixtures'}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $OutputDirectory 'noodle-global-chain-rows.json') -Encoding utf8NoBOM
+}
 & dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-noodle-arc-density (Join-Path $OutputDirectory 'noodle-arc-density.json')
 if($LASTEXITCODE){throw 'Installed Noodle arc density checks failed.'}
 & dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-noodle-custom-loader (Join-Path $OutputDirectory 'noodle-custom-loader.json')
@@ -169,5 +230,10 @@ if(Test-Path -LiteralPath (Join-Path $GameRoot 'Plugins/MappingExtensions.dll'))
 }
 & (Join-Path $PSScriptRoot 'Test-MenuReport.ps1') -Binary (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') -GameRoot $GameRoot -OutputDirectory (Join-Path $OutputDirectory 'menu-report')
 & (Join-Path $PSScriptRoot 'Build-Mod.ps1') -GameRoot $GameRoot -OutputDirectory (Join-Path $OutputDirectory 'mod')
+& dotnet (Join-Path $artifacts 'bin/BeatInsight.Compare/debug/BeatInsight.Compare.dll') $GameRoot --check-note-diagnostics (Join-Path $OutputDirectory 'mod/package/Plugins/BeatInsight.dll') (Join-Path $OutputDirectory 'note-diagnostics-cost.json')
+if($LASTEXITCODE){throw 'Packaged note diagnostic guard/allocation checks failed.'}
+ConvertTo-Json -InputObject $missingManifestMaps.ToArray() -Depth 5|Set-Content -LiteralPath (Join-Path $OutputDirectory 'missing-manifest-maps.json') -Encoding utf8NoBOM
 Write-Host "Menu validation complete: $OutputDirectory"
 Write-Host 'No game process was started; no user history was read or written.'
+
+} finally { $env:BEATINSIGHT_LOCAL_ROOT=$previousArtifactRoot }

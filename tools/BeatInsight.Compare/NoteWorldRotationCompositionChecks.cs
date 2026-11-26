@@ -58,7 +58,8 @@ static class NoteWorldRotationCompositionChecks
     {
         var a=Numerics(actual);return Math.Min((a-expected).Length(),(a+expected).Length())<.00001;
     }
-    internal static object Run(string gameRoot,Func<NoteData,Quaternion?,Quaternion?,bool,(NoteData Note,object Data)>? parsedFactory=null)
+    internal static object Run(string gameRoot,Func<NoteData,Quaternion?,Quaternion?,bool,(NoteData Note,object Data)>? parsedFactory=null,
+        Quaternion?[]? worldFixtures=null,Quaternion?[]? localFixtures=null)
     {
         if(current!=null)throw new InvalidOperationException("Nested note rotation probe");
         var map=GameLoader.Load(gameRoot,"""{"version":"3.3.0","rotationEvents":[{"b":0,"e":0,"r":45},{"b":2,"e":1,"r":-15}],"colorNotes":[{"b":0,"x":0,"y":1,"c":0,"d":1},{"b":1,"x":0,"y":1,"c":0,"d":1},{"b":2,"x":0,"y":1,"c":0,"d":1},{"b":2.001,"x":0,"y":1,"c":0,"d":1},{"b":4,"x":0,"y":1,"c":0,"d":1}]}""",120,noodleExtensions:true);
@@ -99,8 +100,8 @@ static class NoteWorldRotationCompositionChecks
         Field(movement.GetType(),"_jump").SetValue(movement,jump);Field(movement.GetType(),"_floorMovement").SetValue(movement,floor);
         var transform=(Transform)RuntimeHelpers.GetUninitializedObject(typeof(Transform));
         var mirror=heck.GetType("Heck.MirrorExtensions",true)!.GetMethods(flags).Single(m=>m.Name=="Mirror"&&m.ReturnType==typeof(Quaternion)&&m.GetParameters().Length==2);
-        Quaternion?[] worlds={null,new Quaternion(0,0,0,1),Axis(0,30),Axis(1,90),Axis(2,45)};
-        Quaternion?[] locals={null,new Quaternion(0,0,0,1),Axis(0,-20),Axis(2,17)};
+        Quaternion?[] worlds=worldFixtures??new Quaternion?[]{null,new Quaternion(0,0,0,1),Axis(0,30),Axis(1,90),Axis(2,45)};
+        Quaternion?[] locals=localFixtures??new Quaternion?[]{null,new Quaternion(0,0,0,1),Axis(0,-20),Axis(2,17)};
         int cases=0,failed=0,missingControls=0,noncommuting=0;var failures=new List<object>();
         var notes=OracleBridge.GetItems(map).OfType<NoteData>().ToArray();int[] sceneGold={45,45,45,30,30};
         if(notes.Length!=5)throw new InvalidDataException("Rotation composition source notes changed");
@@ -162,7 +163,7 @@ static class NoteWorldRotationCompositionChecks
         return new{cases,failed,missingControls,noncommuting,parsedConstructors=parsedFactory!=null,failures,compiled.Original,compiled.Patched,
             transformAdapters,inverseAdapters,readAdapters,writeAdapters,contextCleared=current==null,
             scope="Native loaded rotation events/converter inputs and actual NoteInit rotation prefix: native nullable gates, scene override selection and real NoteJump/NoteFloorMovement field writes, managed Unity quaternion product and native Heck mirror. "
-                +(parsedFactory==null?"Quaternion inputs are analytic premises injected after data construction. ":"Quaternion inputs come through emitted native constructors with an explicit opaque Euler host edge; no backing-field injection. ")
+                +(parsedFactory==null?"Quaternion inputs are analytic premises injected after data construction. ":"Quaternion inputs come through emitted native constructors with an explicit Euler host edge whose output provenance is recorded by the caller; no backing-field injection. ")
                 +"Component/Transform and Inverse are explicit controlled host edges. Prefix stops before scale/movement remainder. No native Euler, real Transform, full frame/collider pose or admission proof."};
     }
 }

@@ -10,6 +10,10 @@ public static class NoodleRowBridge
     [ThreadStatic]static int allDepth;
     [ThreadStatic]static int colorDepth;
     public static bool Enabled;
+    public static bool CombinedMapping,MappingFirst=true,MappingPostfixFirst=true;
+    public static string? CombinedReverseOrderError;
+    static MethodInfo? mappingPostfix;
+    static System.Reflection.Emit.DynamicMethod? mappingFirstBody,noodleFirstBody;
     public static int AllCalls,ColorCalls,InstalledProcessors;
     static Type processorType=null!;
     static MethodInfo allPostfix=null!,colorPrefix=null!,colorOriginal=null!;
@@ -30,6 +34,21 @@ public static class NoodleRowBridge
         allBody=InstalledTranspilerCompiler.Compile(original.GetMethod("HandleCurrentTimeSliceAllNotesAndSlidersDidFinishTimeSlice",Flags)!,
             patches.GetMethod("ProcessColorNotesInTimeRowTranspiler",Flags)!,exceptionBlocks:true).Method;
     }
+    public static void InitializeCombined(string gameRoot)
+    {
+        if(Comparison.HashFile(Path.Combine(gameRoot,"Plugins/MappingExtensions.dll"))!="1EC0B4EDEEF56C721CD09954D4F251F69A62E6459550615142FAEB6856DA0E4F")throw new InvalidDataException("Mapping row assembly changed");
+        var mapping=AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(gameRoot,"Plugins/MappingExtensions.dll"));
+        var patch=mapping.GetType("MappingExtensions.HarmonyPatches.BeatmapObjectsInTimeRowProcessorHandleCurrentTimeSliceAllNotesAndSlidersDidFinishTimeSlicePatch",true)!;
+        mappingPostfix=patch.GetMethod("Postfix",Flags)!;
+        var mappingTranspiler=patch.GetMethod("Transpiler",Flags)!;
+        var noodle=processorType.Assembly.GetType("NoodleExtensions.HarmonyPatches.ObjectProcessing.ProcessNotesNoodleDataInTimeRow",true)!.GetMethod("ProcessColorNotesInTimeRowTranspiler",Flags)!;
+        var original=typeof(NoteData).Assembly.GetType("BeatmapObjectsInTimeRowProcessor",true)!.GetMethod("HandleCurrentTimeSliceAllNotesAndSlidersDidFinishTimeSlice",Flags)!;
+        mappingFirstBody=InstalledTranspilerCompiler.Compile(original,mappingTranspiler,exceptionBlocks:true,followingPatches:new[]{noodle}).Method;
+        CombinedReverseOrderError=null;
+        try{noodleFirstBody=InstalledTranspilerCompiler.Compile(original,noodle,exceptionBlocks:true,followingPatches:new[]{mappingTranspiler}).Method;}
+        catch(TargetInvocationException e)when(e.GetBaseException() is InvalidOperationException invalid&&invalid.Message.StartsWith("Cannot find ",StringComparison.Ordinal))
+        {noodleFirstBody=null;CombinedReverseOrderError=e.GetBaseException().Message;}
+    }
     public static void Install(object map,int numberOfLines)
     {
         if(!Enabled)return;
@@ -46,8 +65,11 @@ public static class NoodleRowBridge
             int numberOfLines=(int)lines.GetValue(instance)!;
             if(all)
             {
-                allBody.Invoke(null,new[]{instance,slice,(object)time});
-                allPostfix.Invoke(null,new[]{instance,(object)numberOfLines,slice});AllCalls++;
+                (CombinedMapping?(MappingFirst?mappingFirstBody!:noodleFirstBody!):allBody).Invoke(null,new[]{instance,slice,(object)time});
+                if(CombinedMapping&&MappingPostfixFirst)mappingPostfix!.Invoke(null,new[]{slice});
+                allPostfix.Invoke(null,new[]{instance,(object)numberOfLines,slice});
+                if(CombinedMapping&&!MappingPostfixFirst)mappingPostfix!.Invoke(null,new[]{slice});
+                AllCalls++;
             }
             else
             {

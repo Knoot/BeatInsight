@@ -3,6 +3,8 @@
   <PropertyGroup>
     <GameRoot Condition="'$(GameRoot)' == ''"></GameRoot>
     <MapsRoot></MapsRoot>
+    <!-- Optional artifact root; the default is .local in this repository. -->
+    <LocalArtifactsRoot></LocalArtifactsRoot>
     <!-- Optional nonstandard cache; use a trailing directory separator for MSBuild. -->
     <NuGetPackageRoot Condition="'$(NuGetPackageRoot)' == ''"></NuGetPackageRoot>
     <!-- CecilPath is optional: the default uses the standard NuGet package cache. -->

@@ -90,8 +90,7 @@ using(var coordinator=new SelectionCoordinator<string,string>(async (r,t)=> {
     Check(coordinator.Current.Status==SelectionStatus.Ready&&coordinator.Current.Request=="B","Stale unsupported/error result is ignored");
 }
 
-string workspace=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"../../../../../"));
-string scratch=Path.Combine(workspace,".local","menu-checks",Guid.NewGuid().ToString("N"));
+string scratch=BeatInsight.Tooling.LocalArtifacts.PathFor("menu-checks",Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(Path.Combine(scratch,"maps"));
 var info=JObject.Parse("""{"version":"4.0.1","audio":{"bpm":120,"songDuration":12},"difficultyBeatmaps":[{"characteristic":"Standard","difficulty":"Expert","beatmapDataFilename":"maps/Expert.dat"},{"characteristic":"Standard","difficulty":"Hard","beatmapDataFilename":"maps/Hard.dat"}]}""");
 string expert=Path.Combine(scratch,"maps","Expert.dat"),hard=Path.Combine(scratch,"maps","Hard.dat");
@@ -113,6 +112,65 @@ Check(analysis.LegacyHistoryStatus=="available"&&analysis.OwnHistoryStatus=="ava
 Check(analysis.Corrected.HistoryIndices.Length==0&&analysis.Compatible.HistoryIndices.Length==1,"Legacy history is not reindexed against corrected notes");
 Check(analysis.DeathMarkers.Any(m=>m.ColorHex=="#FFFF00"&&m.SongTimeSeconds==1.25)&&analysis.DeathMarkers.Any(m=>m.ColorHex=="#FF0000"&&m.PositionStatus=="completion-song-time-estimate"),"Legacy and own markers retain positions, colors and precision");
 Check(File.ReadAllText(legacyFile)==legacyBefore&&File.ReadAllText(ownFile)==ownBefore,"Selection analysis never writes history");
+// A visual-only track changes neither menu values nor history indexing. Exercise
+// every feature combination, including the strict Reference path and all-hidden.
+using(var visualStream=System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("BeatInsight.IsolatedVisualTrack.json")!)
+using(var visualReader=new StreamReader(visualStream))
+{
+    var source=JObject.Parse(visualReader.ReadToEnd());
+    var plain=(JObject)source.DeepClone();plain.Remove("customData");
+    foreach(var note in plain["colorNotes"]!)((JObject)note).Remove("customData");
+    string visualFolder=Path.Combine(scratch,"visual-tracks"),plainFolder=Path.Combine(scratch,"plain-tracks");
+    foreach(var item in new[]{(visualFolder,source,true),(plainFolder,plain,false)})
+    {
+        Directory.CreateDirectory(item.Item1);
+        var metadata=JObject.Parse("""{"version":"4.0.1","audio":{"bpm":120,"songDuration":12},"difficultyBeatmaps":[{"characteristic":"Standard","difficulty":"Expert","beatmapDataFilename":"map.dat"}]}""");
+        if(item.Item3)metadata["difficultyBeatmaps"]![0]!["customData"]=new JObject {["requirements"]=new JArray("Noodle Extensions","Chroma")};
+        File.WriteAllText(Path.Combine(item.Item1,"Info.dat"),metadata.ToString());File.WriteAllText(Path.Combine(item.Item1,"map.dat"),item.Item2.ToString());
+    }
+    string visualFile=Path.Combine(visualFolder,"map.dat");
+    for(int flags=0;flags<512;flags++)
+    {
+        var features=(AnalysisFeatures)flags;
+        SelectedMapAnalysis Read(string folder)=>SelectedMapAnalyzer.Load(new SelectedMapRequest("custom_level_TEST","Standard","Expert",3,Path.Combine(folder,"map.dat"),legacyFile,ownFile,features:features));
+        var actual=Read(visualFolder);var expected=Read(plainFolder);
+        var actualJson=JObject.FromObject(actual);var expectedJson=JObject.FromObject(expected);
+        actualJson.Remove("BeatmapSha256");expectedJson.Remove("BeatmapSha256");
+        Check(JToken.DeepEquals(actualJson,expectedJson),"Visual-only tracks preserve menu values and history across feature flags: "+flags);
+        Check(actual.BeatmapSha256==((features&AnalysisFeatures.OwnDeaths)!=0?BeatmapFingerprint.Compute(source.ToString()):""),"Visual-only tracks retain exact source fingerprint only when requested: "+flags);
+    }
+    var dirty=(JObject)source.DeepClone();dirty["customData"]!["environment"]![0]!["track"]="notes";
+    File.WriteAllText(visualFile,dirty.ToString());
+    var partial=SelectedMapAnalyzer.Load(new SelectedMapRequest("custom_level_TEST","Standard","Expert",3,visualFile,legacyFile,ownFile,features:new MenuVisibility().Features));
+    Check(partial.NoteError!=null&&partial.Corrected.LeftBins.Length==0&&partial.IndependentDensity&&partial.OwnHistoryStatus=="available"&&partial.LegacyHistoryStatus=="note-analysis-unavailable",
+        "Shared environment binding retains density/own history but masks unsupported note metrics and imported indices");
+    File.WriteAllText(visualFile,source.ToString());
+    Check(File.ReadAllText(legacyFile)==legacyBefore&&File.ReadAllText(ownFile)==ownBefore,"Visual track analysis never writes either history source");
+}
+// Bundled snapshots use exactly the same parser, hash and history rules without
+// resolving a fake filesystem path or writing temporary map documents.
+Check(AnalysisAvailabilityHints.Reason("Bundled map audio offsets have not been validated")=="Audio timing offsets for bundled maps are not supported yet.","Bundled offset refusal has a specific English explanation");
+Check(AnalysisAvailabilityHints.Reason("This beatmap data provider is not supported by the menu analyzer")=="This map's data source is not supported yet.","Unknown provider refusal has a specific English explanation");
+var documents=MapDocuments.Bundled(File.ReadAllText(expert),null,120,12,"Standard","Expert");
+var filesBefore=Directory.GetFiles(scratch,"*",SearchOption.AllDirectories).Order().ToArray();
+for(int memoryMask=0;memoryMask<256;memoryMask++)
+{
+    var features=(AnalysisFeatures)memoryMask;
+    var diskResult=SelectedMapAnalyzer.Load(new SelectedMapRequest("custom_level_TEST","Standard","Expert",3,expert,legacyFile,ownFile,features:features));
+    var memoryResult=await SelectedMapAnalyzer.LoadAsync(new SelectedMapRequest("custom_level_TEST","Standard","Expert",3,"not-on-disk.dat",legacyFile,ownFile,features:features,documents:documents),CancellationToken.None);
+    Check(JsonConvert.SerializeObject(memoryResult)==JsonConvert.SerializeObject(diskResult),"Memory/file selection parity including fingerprint and history: "+memoryMask);
+}
+Check(Directory.GetFiles(scratch,"*",SearchOption.AllDirectories).Order().SequenceEqual(filesBefore),"Memory analysis creates no map files");
+Check(File.ReadAllText(legacyFile)==legacyBefore&&File.ReadAllText(ownFile)==ownBefore,"Memory analysis leaves both histories unchanged");
+var malformedDocuments=new MapDocuments("{","{");
+Check(SelectedMapAnalyzer.Load(new SelectedMapRequest("builtin-test","Standard","Expert",3,"",features:AnalysisFeatures.None,documents:malformedDocuments)).Features==AnalysisFeatures.None,"Hidden bundled analysis does not parse documents");
+using(var memoryCancellation=new CancellationTokenSource())
+{
+    memoryCancellation.Cancel();bool cancelled=false;
+    try{await SelectedMapAnalyzer.LoadAsync(new SelectedMapRequest("builtin-test","Standard","Expert",3,"",documents:malformedDocuments),memoryCancellation.Token);}
+    catch(OperationCanceledException){cancelled=true;}
+    Check(cancelled,"Cancelled bundled analysis does not parse documents");
+}
 for(int mask=0;mask<256;mask++)
 {
     var features=(AnalysisFeatures)mask;
@@ -283,6 +341,42 @@ foreach(int major in new[]{2,3})
         bool hiddenRejected=false;try{Read(menuFeatures&~AnalysisFeatures.Density);}catch(NotSupportedException){hiddenRejected=true;}
         Check(hiddenRejected,"Hidden linked density cannot admit unsupported geometry: "+linked);
     }
+    var emptyPlayer=(JObject)player.DeepClone();emptyPlayer[wallKey]=new JArray();File.WriteAllText(file,emptyPlayer.ToString());
+    var zeroWalls=SelectedMapAnalyzer.Load(new SelectedMapRequest("independent-walls","Standard","Expert",3,file,legacyFile,partialHistory,features:menuFeatures));
+    var zeroView=SelectedMapPresentation.Create(zeroWalls,DrawColor.White,DrawColor.White);
+    Check(zeroWalls.NoteError!=null&&zeroWalls.IndependentDensity&&zeroWalls.SquatError==null&&zeroWalls.SquatCount==0&&zeroView.Squats=="0"&&zeroView.Average=="—"&&zeroView.Left==null,
+        $"v{major} absent obstacles yield a proven zero without admitting player motion or note pose");
+    Check(zeroWalls.LegacyHistoryStatus=="note-analysis-unavailable"&&zeroWalls.DeathMarkers.Any(m=>m.Source=="beatinsight"&&m.NormalizedPosition==.25)&&File.ReadAllText(partialHistory)==historySnapshot
+        &&zeroWalls.BeatmapSha256==BeatmapFingerprint.Compute(emptyPlayer.ToString()),$"v{major} zero-wall fallback preserves timed own history and source identity");
+    var hiddenZero=Read(menuFeatures&~AnalysisFeatures.Squats);
+    Check(hiddenZero.SquatCount==null&&hiddenZero.SquatError==null&&hiddenZero.NoteError!=null,$"v{major} hidden zero counter is not computed");
+    emptyPlayer[wallKey]=root[wallKey]!.DeepClone();File.WriteAllText(file,emptyPlayer.ToString());
+    Check(Read(menuFeatures).SquatCount==null,$"v{major} one obstacle restores the player-motion collision barrier");
+}
+{
+    var metadata=JObject.Parse("""{"version":"4.0.1","audio":{"bpm":120,"songDuration":12},"difficultyBeatmaps":[{"characteristic":"Standard","difficulty":"Expert","beatmapDataFilename":"map.dat","customData":{"requirements":["Mapping Extensions","Noodle Extensions"]}}]}""");
+    var source=JObject.Parse("""{"version":"3.3.0","colorNotes":[{"b":2,"x":0,"y":0,"c":0,"d":1},{"b":4,"x":1,"y":1,"c":1,"d":8}],"sliders":[{"b":2,"x":0,"y":0,"c":0,"d":1,"tb":4,"tx":1,"ty":1,"tc":8}],"obstacles":[{"b":1,"x":1500,"y":1500,"w":1500,"h":1500,"d":4}]}""");
+    string historyPath=Path.Combine(scratch,"combined-notes",DeathHistoryStore.FileName);
+    DeathHistoryStore.Append(historyPath,new DeathRecord{Id="combined-note-death",MapKey=PlayHistory.Key("combined-notes",3,"Standard"),SongTimeSeconds=3,Date=3000});
+    string snapshot=File.ReadAllText(historyPath);
+    SelectedMapAnalysis ReadCombined()=>SelectedMapAnalyzer.Load(new SelectedMapRequest("combined-notes","Standard","Expert",3,"",legacyFile,historyPath,
+        features:new MenuVisibility().Features,documents:new MapDocuments(metadata.ToString(),source.ToString(),file:"map.dat")));
+    var result=ReadCombined();var view=SelectedMapPresentation.Create(result,DrawColor.White,DrawColor.White);
+    Check(result.NoteError==null&&result.SquatError!=null&&result.SquatCount==null&&!result.IndependentDensity,"Canonical combined notes survive unsupported extended walls in menu");
+    Check(view.Average!="—"&&view.Peak!="—"&&view.Median!="—"&&view.Left!=null&&view.Right!=null&&view.Colors.Length==90&&view.Squats=="—","Combined partial menu displays only validated note metrics");
+    Check(result.LegacyHistoryStatus=="extension-positions-unverified"&&result.DeathMarkers.All(m=>m.Source!="legacy")&&result.DeathMarkers.Any(m=>m.Source=="beatinsight"&&m.NormalizedPosition==.25)
+        &&result.BeatmapSha256==BeatmapFingerprint.Compute(source.ToString())&&File.ReadAllText(historyPath)==snapshot,"Combined note admission keeps Legacy indices closed and own timed history read-only");
+    source["colorNotes"]![0]!["customData"]=new JObject{["coordinates"]=new JArray(-.5f,.25f)};
+    var blocked=ReadCombined();var blockedView=SelectedMapPresentation.Create(blocked,DrawColor.White,DrawColor.White);
+    Check(blocked.NoteError==null&&!blocked.IndependentDensity&&blockedView.Average!="—"&&blockedView.Left!=null&&blockedView.Colors.Length==90,"Ordinary linked coordinates admit corrected raw/custom arc roles");
+    Check(blocked.LegacyHistoryStatus=="extension-positions-unverified"&&blocked.SquatCount==null,"Arc role support keeps Legacy indices and wall geometry closed");
+    source["colorNotes"]![0]!["x"]=1500;
+    var nominal=ReadCombined();var nominalView=SelectedMapPresentation.Create(nominal,DrawColor.White,DrawColor.White);
+    Check(nominal.NoteError==null&&!nominal.IndependentDensity&&nominal.SquatCount==null&&nominal.SquatError!=null&&nominalView.Average!="—"&&nominalView.Median!="—","Combined nominal note metrics survive unvalidated spatial coordinates");
+    Check(nominalView.Left?.Direction==1&&nominalView.Right?.Direction==8&&nominalView.Left.RotationZ==null&&nominalView.Right.RotationZ==null,"Nominal first arrows/dots expose unknown tilt rather than an invented angle");
+    Check(nominal.Corrected.Segments.SequenceEqual(blocked.Corrected.Segments)&&nominal.LegacyHistoryStatus=="extension-positions-unverified"&&nominal.DeathMarkers.All(m=>m.Source!="legacy")
+        &&nominal.BeatmapSha256==BeatmapFingerprint.Compute(source.ToString())&&File.ReadAllText(historyPath)==snapshot,"Nominal metrics preserve graph/source identity and read-only history while keeping Legacy indices closed");
+
 }
 DrawColor leftColor=new DrawColor(.8f,.1f,.2f),rightColor=new DrawColor(.1f,.6f,1);
 string privateDiagnostic="Unexpected parser failure <b>PRIVATE_DIAGNOSTIC_PAYLOAD</b>";

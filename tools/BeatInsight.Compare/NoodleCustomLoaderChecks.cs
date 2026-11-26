@@ -18,7 +18,7 @@ static class NoodleCustomLoaderChecks
     }
     public static void CheckContext(object? bpm,object? map,object? saved)
     {if(bpm==null||map==null||saved==null)throw new InvalidDataException($"Loader custom event context missing: bpm={bpm!=null}, map={map!=null}, saved={saved!=null}");}
-    public static object Run(string gameRoot,string? inventory=null,bool noodleRows=false,string? admittedCoverage=null,JumpSettingsSnapshot? jumpSettings=null,bool admittedChains=false,bool copyRows=false,bool heckMap=false,bool heckCopies=false,bool independentArcDensity=false)
+    public static object Run(string gameRoot,string? inventory=null,bool noodleRows=false,string? admittedCoverage=null,JumpSettingsSnapshot? jumpSettings=null,bool admittedChains=false,bool copyRows=false,bool heckMap=false,bool heckCopies=false,bool independentArcDensity=false,string? visualInventory=null,bool combinedDensity=false,bool wallIntervals=false,string? globalRowsInventory=null,bool globalChainRows=false)
     {
         const BindingFlags flags=BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Static|BindingFlags.Instance;
         GameLoader.Load(gameRoot,"""{"version":"3.3.0","colorNotes":[]}""",120,noodleExtensions:true);
@@ -98,9 +98,13 @@ static class NoodleCustomLoaderChecks
                 if(parameters[i].ParameterType.Name=="EnvironmentKeywords")args[i]=Activator.CreateInstance(parameters[i].ParameterType,new object?[]{null});
             }
             NoodleRowBridge.Enabled=noodleRows;
+            MappingNativeRuntime.Enabled=combinedDensity;
             try{return(BeatmapData)compiled.Method.Invoke(null,args)!;}
-            finally{NoodleRowBridge.Enabled=false;}
+            finally{NoodleRowBridge.Enabled=false;MappingNativeRuntime.Enabled=false;}
         }
+        if(globalRowsInventory!=null){NoodleRowBridge.InitializeCombined(gameRoot);return globalChainRows?NoodleGlobalChainRowChecks.Run(gameRoot,Load,globalRowsInventory):NoodleGlobalRowChecks.Run(Load,globalRowsInventory);}
+        if(wallIntervals)return NoodleWallIntervalChecks.Run(Load);
+        if(combinedDensity){NoodleRowBridge.InitializeCombined(gameRoot);return CombinedDensityChecks.Run(Load,inventory);}
         if(independentArcDensity)return IndependentArcDensityChecks.Run(gameRoot,Load,inventory);
         var fixtures=new List<(string Name,JObject Root,float Bpm)>();
         MapNote[] PreparedNotes(BeatmapData map)=>OracleBridge.GetItems(map).OfType<NoteData>().Where(n=>
@@ -128,6 +132,14 @@ static class NoodleCustomLoaderChecks
         fixtures.Add(("chain-orphan-control",JObject.Parse("""{"version":"3.3.0","colorNotes":[],"burstSliders":[{"b":2,"x":0,"y":0,"c":0,"d":1,"tb":4,"tx":1,"ty":1,"sc":4,"s":1}]}"""),120));
         if(heckMap)
         {
+            fixtures.AddRange(NoodleVisualTrackChecks.Fixtures());
+            foreach(bool player in new[]{false,true})
+            {
+                var root=JObject.Parse("""{"version":"3.3.0","colorNotes":[{"b":1,"x":0,"y":0,"c":0,"d":1}],"customData":{"environment":[{"id":"fixture","lookupMethod":"Exact","track":"shared"}],"customEvents":[{"b":0,"t":"AnimateTrack","_type":"AssignPlayerToTrack","d":{"track":"shared","dissolve":[1]}}]}}""");
+                if(player){root["customData"]!["customEvents"]![0]!["t"]="AssignPlayerToTrack";root["customData"]!["customEvents"]![0]!["_type"]="AnimateTrack";}
+                fixtures.Add((player?"canonical-player-shadow-control":"ignored-player-alias-control",root,120));
+            }
+
             fixtures.Add(("heck-manager-control",JObject.Parse("""{"version":"3.3.0","colorNotes":[{"b":2,"x":0,"y":0,"c":0,"d":1,"customData":{"track":"shared","animation":{"offsetPosition":"motion"}}},{"b":4,"x":1,"y":1,"c":1,"d":0,"customData":{"track":["shared","other"]}}],"customData":{"pointDefinitions":{"motion":[[0,0,0,0],[1,2,3,1]],"opacity":[[0,0],[1,1]]},"customEvents":[{"b":0,"t":"AnimateTrack","d":{"track":"shared","duration":1,"dissolve":"opacity"}},{"b":0,"t":"AssignPathAnimation","d":{"track":"other","duration":1,"offsetPosition":"motion"}},{"b":0,"t":"AssignTrackParent","d":{"parentTrack":"parent","childrenTracks":["shared","other"]}},{"b":0,"t":"AssignPlayerToTrack","d":{"track":"player"}},{"b":1,"t":"AnimateTrack","d":{"track":"player","duration":1,"dissolve":"opacity"}}]}}"""),120));
             fixtures.Add(("scale-track-six-notes-control",JObject.Parse("""{"version":"3.3.0","colorNotes":[{"b":475,"x":1,"y":0,"a":0,"c":0,"d":1,"customData":{"coordinates":[-0.5,0],"track":"size"}},{"b":476.5,"x":1,"y":0,"a":0,"c":1,"d":1,"customData":{"coordinates":[-0.25,-0.5],"track":"size"}},{"b":477,"x":1,"y":0,"a":0,"c":0,"d":0,"customData":{"coordinates":[-1,-0.75],"track":"size"}},{"b":478,"x":2,"y":0,"a":0,"c":1,"d":0,"customData":{"track":"size"}},{"b":479,"x":0,"y":1,"a":0,"c":0,"d":6,"customData":{"track":"size"}},{"b":479,"x":1,"y":0,"a":0,"c":1,"d":6,"customData":{"track":"size"}}],"customData":{"customEvents":[{"b":474,"t":"AnimateTrack","d":{"track":"size","scale":[[1,1,1,0],[0.5,0.5,0.5,1]],"duration":1}},{"b":477,"t":"AnimateTrack","d":{"track":"size","scale":[[0.5,0.5,0.5,0],[1,1,1,1]],"duration":0.5}}]}}"""),174));
             foreach(string variant in new[]{"none","speed","offset","both"})
@@ -156,6 +168,15 @@ static class NoodleCustomLoaderChecks
                 fixtures.Add(("chroma-early-"+origin,root,120));
             }
             fixtures.Add(("heck-unknown-track-control",JObject.Parse("""{"version":"3.3.0","colorNotes":[],"customData":{"customEvents":[{"b":0,"t":"AnimateTrack","d":{"track":"missing","duration":1,"dissolve":[0]}}]}}"""),120));
+        }
+        var visualSources=new Dictionary<string,MapCase>();int extraVisualRowLoads=0;
+        if(visualInventory!=null)foreach(string source in Directory.GetFiles(visualInventory,"*.result.json").Order(StringComparer.Ordinal))
+        {
+            var request=JObject.Parse(File.ReadAllText(source))["request"]!.ToObject<MapCase>()!;
+            string name="isolated-visual-real-"+Path.GetFileNameWithoutExtension(source);
+            var root=NoodleVisualTrackChecks.ProjectReal(request);var info=LocalMap.Info(request.Folder);
+            fixtures.Add((name,root,(float)(info["_beatsPerMinute"]??info["audio"]?["bpm"]??throw new InvalidDataException("Initial BPM missing"))));
+            visualSources.Add(name,request);
         }
         var ownRequests=new Dictionary<string,MapCase>();var excluded=new List<object>();
         string[] ids=admittedCoverage==null?new[]{"089","090","091","092"}:JArray.Parse(File.ReadAllText(admittedCoverage))
@@ -211,6 +232,15 @@ static class NoodleCustomLoaderChecks
             var raw=(BeatmapData)GameLoader.Load(gameRoot,fixture.Root.ToString(),fixture.Bpm,noodleExtensions:true);
             var actual=Load(fixture.Root,fixture.Bpm);var expected=OracleBridge.GetItems(raw).OfType<BeatmapObjectData>().ToArray();
             var items=OracleBridge.GetItems(actual).OfType<BeatmapObjectData>().ToArray();
+            object? realVisualBaseline=null;
+            if(visualSources.TryGetValue(fixture.Name,out var visualRequest))
+            {
+                var without=Load(NoodleVisualTrackChecks.WithoutAssignments(fixture.Root),fixture.Bpm);extraVisualRowLoads++;
+                bool rowsSame=JToken.DeepEquals(JArray.FromObject(GameLoader.Describe(actual)),JArray.FromObject(GameLoader.Describe(without)));
+                var production=JObject.FromObject(NoodleVisualTrackChecks.CompareProduction(visualRequest));
+                realVisualBaseline=new{rowsSame,production};
+                if(!rowsSame||(int)production["failed"]! !=0)throw new InvalidDataException("Real visual-track source differs from unbound geometry baseline");
+            }
             bool orderChanged=!expected.Select(Key).SequenceEqual(items.Select(Key));
             expected=expected.OrderBy(Key,StringComparer.Ordinal).ToArray();items=items.OrderBy(Key,StringComparer.Ordinal).ToArray();
             var errors=new List<string>();var nativeDifferences=new List<object>();
@@ -230,6 +260,14 @@ static class NoodleCustomLoaderChecks
             }
             int eventCount=((IEnumerable)actual.GetType().GetProperty("customEventDatas")!.GetValue(actual)!).Cast<object>().Count();
             if(eventCount!=(fixture.Root["customData"]?["customEvents"]?.Count()??0))errors.Add("Custom events were not inserted");
+            if(fixture.Name is "canonical-player-shadow-control" or "ignored-player-alias-control")
+            {
+                string expectedType=fixture.Name=="canonical-player-shadow-control"?"AssignPlayerToTrack":"AnimateTrack";
+                var customEvents=((IEnumerable)actual.GetType().GetProperty("customEventDatas")!.GetValue(actual)!).Cast<object>().ToArray();
+                if(customEvents.Length!=1||(string?)customEvents[0].GetType().GetProperty("eventType")!.GetValue(customEvents[0])!=expectedType)
+                    errors.Add("Canonical v3 event type was shadowed by a legacy alias");
+            }
+
             object? copyEvidence=null;
             if(copyRows)
             {
@@ -238,13 +276,18 @@ static class NoodleCustomLoaderChecks
             }
             object? transformEvidence=null;
             if(heckCopies){transformEvidence=HeckMapTransformChecks.Run(gameRoot,actual,fixture.Bpm);if((int)JObject.FromObject(transformEvidence)["failed"]! !=0)errors.Add("Transformed Heck manager composition differs");}
-            object? scaleNoteEvidence=null;
+            object? scaleNoteEvidence=null;object? visualTrackEvidence=null;
             object? heckEvidence=null;
             if(heckMap)
             {
-                Dictionary<string,object>? captured=fixture.Name=="scale-track-six-notes-control"?new():null;
+                Dictionary<string,object>? captured=fixture.Name=="scale-track-six-notes-control"||fixture.Name.StartsWith("isolated-visual-",StringComparison.Ordinal)?new():null;
                 heckEvidence=HeckMapChecks.Run(gameRoot,actual,fixture.Bpm,capture:captured==null?null:(id,data)=>captured.Add(id,data));
-                if(captured!=null)
+                if(captured!=null&&fixture.Name.StartsWith("isolated-visual-",StringComparison.Ordinal))
+                {
+                    visualTrackEvidence=visualSources.ContainsKey(fixture.Name)?NoodleVisualTrackChecks.RunReal(captured["Heck"],captured["NoodleExtensions"],fixture.Bpm):NoodleVisualTrackChecks.Run(gameRoot,captured["Heck"],captured["NoodleExtensions"],fixture.Name.EndsWith("geometry-control",StringComparison.Ordinal),fixture.Name.Contains("constant=True",StringComparison.Ordinal),fixture.Name.Contains("opacity",StringComparison.Ordinal));
+                    if((int)JObject.FromObject(visualTrackEvidence)["failed"]! !=0)errors.Add("Visual-only track changed native geometry offsets");
+                }
+                else if(captured!=null)
                 {
                     scaleNoteEvidence=NoodleScaleNoteChecks.Run(gameRoot,captured["Heck"],captured["NoodleExtensions"]);
                     if((int)JObject.FromObject(scaleNoteEvidence)["failed"]! !=0)errors.Add("Scale track note binding/consumer differs");
@@ -389,7 +432,7 @@ static class NoodleCustomLoaderChecks
             }
             if(noodleRows&&items.OfType<NoteData>().Any()&&cacheReads==0)errors.Add("No composed Noodle row cache was consumed");
             if(errors.Count>0)failed++;
-            results.Add(new{fixture.Name,objects=items.Length,eventCount,orderChanged,parsedObjects,fakeNoScore,cacheReads,constructorUnavailable,constructorFailures,ownComparison,copyEvidence,heckEvidence,transformEvidence,scaleNoteEvidence,nativeDifferences,errors=errors.Take(12).ToArray()});
+            results.Add(new{fixture.Name,objects=items.Length,eventCount,orderChanged,parsedObjects,fakeNoScore,cacheReads,constructorUnavailable,constructorFailures,ownComparison,copyEvidence,heckEvidence,transformEvidence,scaleNoteEvidence,visualTrackEvidence,realVisualBaseline,nativeDifferences,errors=errors.Take(12).ToArray()});
             }
             catch(Exception e)when(admittedCoverage!=null)
             {failed++;results.Add(new{fixture.Name,errors=new[]{"Admitted arc probe failed"},exception=e.GetBaseException().GetType().Name,message=e.GetBaseException().ToString()});}
@@ -403,14 +446,14 @@ static class NoodleCustomLoaderChecks
         }
         }
         finally{NativeFakeRegistry.CaptureSources=previousCapture;}
-        bool rowDispatchValid=!noodleRows||(copyRows||heckCopies?NoodleRowBridge.InstalledProcessors>=fixtures.Count:NoodleRowBridge.InstalledProcessors==fixtures.Count)&&NoodleRowBridge.AllCalls>0&&NoodleRowBridge.ColorCalls>0;
+        bool rowDispatchValid=!noodleRows||(copyRows||heckCopies?NoodleRowBridge.InstalledProcessors>=fixtures.Count+extraVisualRowLoads:NoodleRowBridge.InstalledProcessors==fixtures.Count+extraVisualRowLoads)&&NoodleRowBridge.AllCalls>0&&NoodleRowBridge.ColorCalls>0;
         if(!rowDispatchValid)failed++;
         int transformedCases=results.Sum(r=>JObject.FromObject(r)["transformEvidence"] is JObject evidence?(int)evidence["cases"]!:0);
         if(heckCopies&&transformedCases!=fixtures.Count*4)failed++;
         return new{cases=fixtures.Count,failed,nativeFieldAccessors=NativeFieldAccessorChecks.Enabled,nativeAccessorOwnership=NativeFieldAccessorChecks.Enabled?NativeFieldAccessorChecks.LoadedOwnership():null,customFieldAddressAdapters=MappingNativeRuntime.CustomFieldAddressAdapters,registrarLifetime=registrar?.Lifetime,callbackPatchLifetime=callbackPatch?.Lifetime,affinitySpawnLifetime=affinitySpawn?.Lifetime,transformedCases,partialNativeCases=results.Count(r=>JObject.FromObject(r)["heckEvidence"] is JObject evidence&&(string?)evidence["completion"]=="partial-native-unity-quaternion-boundary"),noodleRows,NoodleRowBridge.AllCalls,NoodleRowBridge.ColorCalls,NoodleRowBridge.InstalledProcessors,
             rowDispatchValid,admittedArcCases=ownRequests.Count,admittedChains,unityEulerUnavailable,excluded,forwardedConverterSites=forwarded,exceptionFinallyRegions=load.GetMethodBody()!.ExceptionHandlingClauses.Count,results,
             scope=heckMap?
-                "Actual custom loader, eight converters and controlled Noodle rows followed by installed Heck manager and Heck/Noodle/Chroma module deserialization. Shared tracks, early registration, point definition parsing and Resolve identity checked. Environment/material early registration included; no environment construction, event execution, all-mod Harmony ordering, Unity lifecycle or support admission.":noodleRows?
+                "Actual custom loader, eight converters and controlled Noodle rows followed by installed Heck manager and Heck/Noodle/Chroma module deserialization. Shared tracks, early registration, point definition parsing and Resolve identity checked. Environment/material early registration included; event-consumer checks use explicit controlled schedulers where reported; no environment construction, full game event loop, all-mod Harmony ordering or Unity lifecycle.":noodleRows?
                 "Actual custom loader and seven converters; controlled installation of real Noodle row processor, actual all-row transpiler/body/postfix and color-row prefix/body in installed order, followed by genuine Noodle note/slider/obstacle constructors. Seven type-specific arc/layer role fields may differ from raw and are reported rather than independently validated. No Harmony all-mod ordering, full Heck deserializer, copy/mirror composition, event/environment execution, Unity lifecycle or support admission.":
                 "Actual installed custom loader/map factory, seven converter transpilers, native base row/temporal processing, custom event insertion and sort; two constructor field-address adapters and custom sorted-list forwarding. Lighting excluded, no Noodle row transpiler/prefixes, Noodle deserialized data, event execution, Unity lifecycle or support admission."};
     }

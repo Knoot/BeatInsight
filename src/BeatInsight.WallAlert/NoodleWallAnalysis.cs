@@ -65,7 +65,8 @@ public static class NoodleWallAnalysis
             if((bool?)custom?[old?"_fake":"NE_fake"]==true)continue;
             var shape=Read(item,old?2:3);
             float beat=(float?)item[old?"_time":"b"]??0,duration=(float?)item[old?"_duration":"d"]??0;
-            if(!float.IsFinite(beat)||!float.IsFinite(duration)||!float.IsFinite(beat+duration)||duration<0)throw new NotSupportedException("Invalid Noodle wall interval");
+            if(!float.IsFinite(beat)||!float.IsFinite(duration)||!float.IsFinite(beat+duration))throw new NotSupportedException("Invalid Noodle wall interval");
+            if(duration<0)throw new NotSupportedException("Negative Noodle wall duration requires a validated collision profile");
             if(shape.Width>0&&shape.Height>0&&shape.Y<=2&&shape.Y+shape.Height>2)parts.Add((beat,beat+duration,shape));
         }
         var snapshots=parts.Select(p=>new NoodleWallSnapshot(p.Beat,p.Beat,p.End,p.Shape)).ToArray();

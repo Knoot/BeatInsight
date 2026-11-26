@@ -30,7 +30,7 @@ public sealed class LoadedMap
 }
 public static class LocalMap
 {
-    public const int AnalysisProfileVersion=78;
+    public const int AnalysisProfileVersion=85;
     static float F(JToken? t, float fallback = 0) => (float?)t ?? fallback;
     static int I(JToken? t, int fallback = 0) => (int?)t ?? fallback;
     static int AudioInteger(JToken? value,string field)
@@ -80,6 +80,28 @@ public static class LocalMap
             throw new ArgumentException("Independent note analysis cannot include wall-dependent features",nameof(features));
         var info = Info(test.Folder);
         string json = System.IO.File.ReadAllText(SafePath(test.Folder, test.File));
+        return Parse(test,info,json,features,includeSwingWindowWalls,jumpSettings,null);
+    }
+    public static LoadedMap LoadDocuments(MapDocuments documents,string characteristic,string difficulty,AnalysisFeatures features=AnalysisFeatures.All,
+        bool includeSwingWindowWalls=true,JumpSettingsSnapshot? jumpSettings=null)
+    {
+        if(documents==null)throw new ArgumentNullException(nameof(documents));
+        if(!includeSwingWindowWalls&&(features&(AnalysisFeatures.Reference|AnalysisFeatures.Squats))!=0)
+            throw new ArgumentException("Independent note analysis cannot include wall-dependent features",nameof(features));
+        return Parse(new MapCase{Characteristic=characteristic,Difficulty=difficulty,File=documents.File},JObject.Parse(documents.InfoJson),documents.BeatmapJson,
+            features,includeSwingWindowWalls,jumpSettings,documents);
+    }
+    static LoadedMap Parse(MapCase test,JObject info,string json,AnalysisFeatures features,bool includeSwingWindowWalls,JumpSettingsSnapshot? jumpSettings,MapDocuments? documents)
+    {
+        float Duration()
+        {
+            if(documents==null)return ReadDuration(info,test.Folder);
+            var value=info["audio"]?["songDuration"];
+            if(value==null||value.Type is not (JTokenType.Float or JTokenType.Integer))throw new NotSupportedException("Document audio duration is unavailable");
+            float result=F(value);
+            if(!float.IsFinite(result)||result<0)throw new NotSupportedException("Invalid document audio duration");
+            return result;
+        }
         var root = JObject.Parse(json);
         var selected = info["_difficultyBeatmapSets"] != null
             ? Items(info["_difficultyBeatmapSets"]).Where(s => (string?)s["_beatmapCharacteristicName"] == test.Characteristic).SelectMany(s=>Items(s["_difficultyBeatmaps"])).First(d => (string?)d["_difficulty"] == test.Difficulty && (string?)d["_beatmapFilename"] == test.File)
@@ -89,7 +111,38 @@ public static class LocalMap
         var requirements = ((JContainer)selected).DescendantsAndSelf().OfType<JProperty>().Concat(NoodleMetadataScope.ActiveProperties(root,metadataMajor)).Where(p => p.Name == "_requirements" || p.Name == "requirements").SelectMany(p => Items(p.Value)).Select(t => t.ToString()).Distinct().ToArray();
         bool mappingExtensions=requirements.Contains("Mapping Extensions");
         bool noodleExtensions=requirements.Contains("Noodle Extensions");
-        if(noodleExtensions&&mappingExtensions)throw new NotSupportedException("Combined Mapping Extensions and Noodle Extensions gameplay has not been validated");
+        bool combinedCanonicalNotes=false,combinedNominalNotes=false;
+        if(noodleExtensions&&mappingExtensions)
+        {
+            // History identity needs no gameplay geometry. Combined density is
+            // independently limited to v3 colored notes and ordinary arcs.
+            bool identityOnly=(features&~AnalysisFeatures.OwnDeaths)==0;
+            bool densityOnly=(features&AnalysisFeatures.Density)!=0&&(features&~(AnalysisFeatures.Density|AnalysisFeatures.OwnDeaths))==0;
+            bool Empty(string key)=>root[key]==null||root[key]!.Type==JTokenType.Null||root[key] is JArray {Count:0};
+            bool nominal=metadataMajor==3&&Empty("bombNotes")&&Empty("burstSliders")
+                &&new[]{"customData","_customData"}.All(k=>root[k] is not JObject data
+                    ||NoodleStaticProfile.IsEmptyTrackValue(data["fakeBurstSliders"]));
+            bool Canonical(string collection,bool arc=false)
+            {
+                if(root[collection]==null||root[collection]!.Type==JTokenType.Null)return true;
+                if(root[collection] is not JArray items)return false;
+                bool Axis(JToken item,string key,int max)=>item[key]==null||item[key]!.Type==JTokenType.Integer&&(double)item[key]!>=0&&(double)item[key]!<=max;
+                return items.All(item=>item is JObject&&Axis(item,"x",3)&&Axis(item,"y",2)&&Axis(item,"d",8)
+                    &&(!arc||Axis(item,"tx",3)&&Axis(item,"ty",2)&&Axis(item,"tc",8)));
+            }
+            bool windows=includeSwingWindowWalls&&(features&(AnalysisFeatures.Average|AnalysisFeatures.Peak|AnalysisFeatures.Median))!=0;
+            combinedCanonicalNotes=!identityOnly&&!densityOnly&&nominal&&!windows
+                &&test.Characteristic is ("Standard" or "Lawless" or "OneSaber" or "NoArrows")&&(features&(AnalysisFeatures.Squats|AnalysisFeatures.Reference))==0
+                &&Canonical("colorNotes")&&Canonical("sliders",true)
+                &&new[]{"customData","_customData"}.All(k=>root[k] is not JObject data
+                    ||new[]{"fakeColorNotes","fakeBombNotes"}.All(name=>NoodleStaticProfile.IsEmptyTrackValue(data[name])));
+            if(!identityOnly&&!densityOnly&&!combinedCanonicalNotes&&!windows
+                &&(features&(AnalysisFeatures.Squats|AnalysisFeatures.Reference))==0
+                &&(features&(AnalysisFeatures.Average|AnalysisFeatures.Peak|AnalysisFeatures.Median|AnalysisFeatures.FirstNotes))!=0)
+                combinedNominalNotes=NoodleCombinedNominalNotes.Project(root,metadataMajor,test.Characteristic);
+            if(!identityOnly&&!(densityOnly&&nominal)&&!combinedCanonicalNotes&&!combinedNominalNotes)
+                throw new NotSupportedException("Combined Mapping Extensions and Noodle Extensions geometry has not been validated; independent density requires v3 notes/arcs without bombs or chains");
+        }
         var unsupportedRequirements=requirements.Where(r=>r!="Chroma"&&r!="Mapping Extensions"&&r!="Noodle Extensions").ToArray();
         if (unsupportedRequirements.Length > 0) throw new NotSupportedException("Required extensions: " + string.Join(", ", unsupportedRequirements));
         if (!noodleExtensions&&NoodleMetadataScope.ActiveProperties(root,metadataMajor).Any(p => p.Name == "_fake" || p.Name == "fake" || p.Name == "NE_fake" || p.Name == "fakeColorNotes" || p.Name == "fakeBombNotes" || p.Name == "fakeObstacles" || p.Name == "fakeBurstSliders")) throw new NotSupportedException("Custom fake objects require extension loader");
@@ -100,13 +153,20 @@ public static class LocalMap
         if (bpm <= 0||float.IsNaN(bpm)||float.IsInfinity(bpm)) throw new NotSupportedException("Non-positive or non-finite initial BPM; no valid vanilla timeline");
         bool needNotes=(features&(AnalysisFeatures.Average|AnalysisFeatures.Peak|AnalysisFeatures.Median|AnalysisFeatures.FirstNotes|AnalysisFeatures.Density|AnalysisFeatures.ImportedDeaths|AnalysisFeatures.Reference))!=0;
         bool needDuration=(features&(AnalysisFeatures.Density|AnalysisFeatures.ImportedDeaths|AnalysisFeatures.OwnDeaths|AnalysisFeatures.Reference))!=0;
-        bool orientation=(features&(AnalysisFeatures.FirstNotes|AnalysisFeatures.Reference))!=0;
+        bool orientation=(features&(AnalysisFeatures.FirstNotes|AnalysisFeatures.Reference))!=0&&!combinedNominalNotes;
         bool needWalls=(features&(AnalysisFeatures.Squats|AnalysisFeatures.Reference))!=0
             ||includeSwingWindowWalls&&(features&(AnalysisFeatures.Average|AnalysisFeatures.Peak|AnalysisFeatures.Median))!=0;
         if(noodleExtensions)NoodleFakeData.Append(root,major,needNotes,needWalls);
+        string wallCollection=major==2?"_obstacles":"obstacles";
+        bool emptyWallSet=noodleExtensions&&major is (2 or 3)&&!needNotes&&needWalls
+            &&test.Characteristic is ("Standard" or "Lawless" or "OneSaber" or "NoArrows")
+            &&(root[wallCollection]==null||root[wallCollection] is JArray {Count:0})
+            &&new[]{"customData","_customData"}.All(k=>root[k]==null||root[k]!.Type==JTokenType.Null||root[k] is JObject);
         bool independentDensity=noodleExtensions&&(features&AnalysisFeatures.Density)!=0
             &&(features&(AnalysisFeatures.Average|AnalysisFeatures.Peak|AnalysisFeatures.Median|AnalysisFeatures.FirstNotes|AnalysisFeatures.ImportedDeaths|AnalysisFeatures.Reference|AnalysisFeatures.Squats))==0;
         if(independentDensity)independentDensity=NoodleDensityProjection.Project(root,major,test.Characteristic);
+        if(noodleExtensions&&mappingExtensions&&needNotes&&!independentDensity&&!combinedCanonicalNotes&&!combinedNominalNotes)
+            throw new NotSupportedException("Combined extension density projection is unavailable");
         if(noodleExtensions&&needNotes)
         {
             NoodlePositionDefinitions.ResolveNotes(root,major);
@@ -115,18 +175,20 @@ public static class LocalMap
         bool wallInteraction=noodleExtensions&&needWalls&&NoodleWallInteraction.Project(root,major);
         bool wallEntry=noodleExtensions&&needWalls&&NoodleWallEntry.Project(root,selected,major,bpm,jumpSettings);
         var nominalTracks=new HashSet<string>(StringComparer.Ordinal);
-        if(noodleExtensions)NoodleStaticProfile.Validate(root,major,needNotes,needWalls,bpm,out nominalTracks);
+        // Player/object transforms cannot create a crouch obstacle from an
+        // empty loaded collection. Fake arrays were already appended above.
+        if(noodleExtensions)NoodleStaticProfile.Validate(root,major,needNotes,needWalls&&!emptyWallSet,bpm,out nominalTracks);
         bool wallLength=noodleExtensions&&needWalls&&NoodleWallData.HasLength(root,major);
         var correctedWallEnds=new Dictionary<JToken,float>();
         string? squatJson=noodleExtensions&&(features&AnalysisFeatures.Squats)!=0?NoodleFakeData.WithoutFakeWalls(root,major):null;
         if(!needNotes&&!wallLength)return new LoadedMap {HasNoodleGeometry=wallInteraction||wallEntry,Json=json,Bpm=bpm,Version=version,MappingExtensions=mappingExtensions,NoodleExtensions=noodleExtensions,Features=requirements.Select(r=>r=="Chroma"?"chroma":r=="Mapping Extensions"?"mapping-extensions":"noodle-static-subset").ToArray(),
-            SquatJson=squatJson,Input=new MapInput {Duration=needDuration?ReadDuration(info,test.Folder):0}};
+            SquatJson=squatJson,Input=new MapInput {Duration=needDuration?Duration():0}};
         JObject? audio = null; string? audioJson = null;
         if (major == 4)
         {
             string? audioFile=(string?)info["audio"]?["audioDataFilename"];
             if(string.IsNullOrWhiteSpace(audioFile))throw new NotSupportedException("Missing AudioData filename for v4 timing");
-            try{audioJson=System.IO.File.ReadAllText(SafePath(test.Folder,audioFile));}
+            try{audioJson=documents==null?System.IO.File.ReadAllText(SafePath(test.Folder,audioFile)):documents.AudioJson??throw new NotSupportedException("Document AudioData is unavailable");}
             catch(Exception e) when(e is FileNotFoundException||e is DirectoryNotFoundException)
             {throw new NotSupportedException("AudioData file is missing for v4 timing",e);}
             try{audio=JObject.Parse(audioJson);}
@@ -187,7 +249,7 @@ public static class LocalMap
             float movement=F(selected["_noteJumpMovementSpeed"]??selected["noteJumpMovementSpeed"]);
             string projection=NoodleWallData.Prepare(root,major,movement,Time,BeatAtTime,correctedWallEnds);
             if((features&AnalysisFeatures.Squats)!=0)squatJson=projection;
-            if(!needNotes)return new LoadedMap {Json=json,Bpm=bpm,Version=version,NoodleExtensions=true,SquatJson=squatJson,Features=new[]{"noodle-static-subset","noodle-short-wall-length"},Input=new MapInput {Duration=needDuration?ReadDuration(info,test.Folder):0}};
+            if(!needNotes)return new LoadedMap {Json=json,Bpm=bpm,Version=version,NoodleExtensions=true,SquatJson=squatJson,Features=new[]{"noodle-static-subset","noodle-short-wall-length"},Input=new MapInput {Duration=needDuration?Duration():0}};
         }
         JToken IndexedData(string collection,JToken? index)
         {
@@ -312,7 +374,7 @@ public static class LocalMap
             bombs=bombs.OrderBy(n=>n.Beat).ToList();
         }
         if(noodleExtensions)NoodleBurstPreparation.Validate(notes,bombs,arcs,chains);
-        var prepared=NotePreparation.Prepare(notes,bombs,arcs,chains,chainsBeforeArcs:major==4,prepareOrientation:orientation);
+        var prepared=NotePreparation.Prepare(notes,bombs,arcs,chains,chainsBeforeArcs:major==4,prepareOrientation:orientation,preserveRawArcRoles:combinedCanonicalNotes);
         if(nominalMotionNotes!=null&&nominalMotionNotes.Any(n=>n.ScoringType!=1||n.SliceCount!=1))
             throw new NotSupportedException("Non-default motion on linked or chain notes has not been validated");
         // NoodleNoteData applies this override to already processed note rows.
@@ -343,12 +405,13 @@ public static class LocalMap
         if(mappingExtensions)mapFeatures.Add("mapping-extensions");
         if(noodleExtensions)mapFeatures.Add("noodle-static-subset");
         if(independentDensity)mapFeatures.Add("noodle-density-only");
+        if(combinedNominalNotes)mapFeatures.Add("noodle-nominal-notes");
         if (changes.Count > 1) mapFeatures.Add("bpm-changes");
         if (rawArcs.Count>0) mapFeatures.Add("arcs");
         if (Items(root[major==4?"chains":"burstSliders"]).Any()) mapFeatures.Add("chains");
         if (notes.Any(n => n.Direction==8)) mapFeatures.Add("dots");
-        float duration = needDuration?ReadDuration(info,test.Folder):0;
-        return new LoadedMap { HasNoodleChains=noodleExtensions&&chains.Count>0,HasNoodleGeometry=wallInteraction||wallEntry||nominalBombMotion||nominalMotionNotes?.Count>0||notes.Concat(bombs).Concat(arcs.Select(a=>a.Head)).Concat(chains.Select(a=>a.Head)).Any(n=>n.NoodleX.HasValue||n.NoodleY.HasValue)||arcs.Concat(chains).Any(a=>a.NoodleTailX.HasValue||a.NoodleTailY.HasValue),Json=json,SquatJson=squatJson, AudioJson=audioJson, Bpm=bpm, Version=version, MappingExtensions=mappingExtensions,NoodleExtensions=noodleExtensions,Features=mapFeatures.ToArray(), Input=new MapInput { Duration=duration, Notes=prepared, Walls=walls.OrderBy(w=>w.Time).ToArray() } };
+        float duration = needDuration?Duration():0;
+        return new LoadedMap { HasNoodleChains=noodleExtensions&&chains.Count>0,HasNoodleGeometry=combinedCanonicalNotes||combinedNominalNotes||wallInteraction||wallEntry||nominalBombMotion||nominalMotionNotes?.Count>0||notes.Concat(bombs).Concat(arcs.Select(a=>a.Head)).Concat(chains.Select(a=>a.Head)).Any(n=>n.NoodleX.HasValue||n.NoodleY.HasValue)||arcs.Concat(chains).Any(a=>a.NoodleTailX.HasValue||a.NoodleTailY.HasValue),Json=json,SquatJson=squatJson, AudioJson=audioJson, Bpm=bpm, Version=version, MappingExtensions=mappingExtensions,NoodleExtensions=noodleExtensions,Features=mapFeatures.ToArray(), Input=new MapInput { Duration=duration, Notes=prepared, Walls=walls.OrderBy(w=>w.Time).ToArray() } };
     }
     static float ReadDuration(JObject info,string folder)
     {

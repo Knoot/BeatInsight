@@ -10,6 +10,10 @@ static class NoodleNativeData
     static object? registration;
     public static object Deserialize(string gameRoot,JObject root,string major)
     {
+        if(major is not ("2" or "3"))throw new NotSupportedException("Installed custom data loader supports only verified v2/v3 formats");
+        var declared=root[major=="2"?"_version":"version"];
+        if(declared!=null&&(declared.Type!=JTokenType.String||!Version.TryParse((string?)declared,out var version)||version.Major.ToString()!=major))
+            throw new NotSupportedException("Custom loader format and canonical JSON version disagree");
         if(customData==null)
         {
             string dataPath=Path.Combine(gameRoot,"Plugins/CustomJSONData.dll"),extensionPath=Path.Combine(gameRoot,"Plugins/NoodleExtensions.dll");

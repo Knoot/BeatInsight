@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "maps": [
+    {
+      "Folder": "38591 (Paradise - RateGyro)",
+      "Characteristic": "Standard",
+      "Difficulty": "ExpertPlus",
+      "File": "ExpertPlusStandard.dat"
+    },
+    {
+      "Folder": "3a821 (Yellow - RateGyro)",
+      "Characteristic": "Standard",
+      "Difficulty": "ExpertPlus",
+      "File": "ExpertPlusStandard.dat"
+    },
+    {
+      "Folder": "4c110 (Everytime We Touch - Tonkie)",
+      "Characteristic": "Standard",
+      "Difficulty": "Expert",
+      "File": "ExpertStandard.dat"
+    },
+    {
+      "Folder": "2a669 (Say (All I Need) - RateGyro)",
+      "Characteristic": "Standard",
+      "Difficulty": "ExpertPlus",
+      "File": "ExpertPlusStandard.dat"
+    },
+    {
+      "Folder": "333d8 (Golden Hour - RateGyro & TheCzar1994)",
+      "Characteristic": "Standard",
+      "Difficulty": "Normal",
+      "File": "NormalStandard.dat"
+    },
+    {
+      "Folder": "33647 (Serotonin - HypersonicSharkz)",
+      "Characteristic": "Standard",
+      "Difficulty": "Expert",
+      "File": "ExpertStandard.dat"
+    },
+    {
+      "Folder": "3a526 (Believer - MadChase)",
+      "Characteristic": "Standard",
+      "Difficulty": "Expert",
+      "File": "ExpertStandard.dat"
+    },
+    {
+      "Folder": "3a662 (this is what winter feels like - ben)",
+      "Characteristic": "Standard",
+      "Difficulty": "Expert",
+      "File": "ExpertStandard.dat"
+    },
+    {
+      "Folder": "3bef7 (Higher Ground - Darkrealm7)",
+      "Characteristic": "Lawless",
+      "Difficulty": "ExpertPlus",
+      "File": "ExpertPlusLawless.dat"
+    },
+    {
+      "Folder": "3e4b8 (Goodbye Moonmen - noam15A)",
+      "Characteristic": "OneSaber",
+      "Difficulty": "Expert",
+      "File": "ExpertOneSaber.dat"
+    }
+  ]
+}

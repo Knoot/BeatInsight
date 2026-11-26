@@ -8,7 +8,8 @@ static class ReferenceFiles
     {
         string setting="Reference"+role+"Assembly";
         string? value=Environment.GetEnvironmentVariable("BEATINSIGHT_REFERENCE_"+role.ToUpperInvariant()+"_ASSEMBLY");
-        for(var folder=new DirectoryInfo(AppContext.BaseDirectory);string.IsNullOrWhiteSpace(value)&&folder!=null;folder=folder.Parent)
+        foreach(var start in new[]{Directory.GetCurrentDirectory(),AppContext.BaseDirectory})
+        for(var folder=new DirectoryInfo(start);string.IsNullOrWhiteSpace(value)&&folder!=null;folder=folder.Parent)
         {
             string file=Path.Combine(folder.FullName,"paths.props");
             if(!File.Exists(file))continue;

@@ -14,7 +14,7 @@ static class NoodleMenuCoverage
         {
             var previous=JObject.Parse(File.ReadAllText(path));
             var request=previous["request"]!.ToObject<MapCase>()!;
-            string source=Path.GetFileName(path);string? status=null,error=null,squatError=null,noteError=null,previousMenuStatus=null,densityError=null;object? metrics=null;double? medianLeft=null,medianRight=null;int? squats=null;
+            string source=Path.GetFileName(path);string? mapSha256=null,infoSha256=null;float? duration=null;string? status=null,error=null,squatError=null,noteError=null,previousMenuStatus=null,densityError=null;object? metrics=null;double? medianLeft=null,medianRight=null;int? squats=null;
             bool independentDensity=false;int densitySegments=0;
             float[]? densityValues=null;string? densitySha256=null;
             var differences=new List<string>();bool baseline=(string?)previous["status"]=="analyzed";
@@ -22,11 +22,11 @@ static class NoodleMenuCoverage
             try
             {
                 string file=LocalMap.SafePath(request.Folder,request.File);
-                string hash=Comparison.Hash(File.ReadAllText(file));
+                string hash=mapSha256=Comparison.Hash(File.ReadAllText(file));
                 var analysis=SelectedMapAnalyzer.Load(new SelectedMapRequest("diagnostic",request.Characteristic,request.Difficulty,
                     request.Difficulty switch {"Easy"=>0,"Normal"=>1,"Hard"=>2,"Expert"=>3,"ExpertPlus"=>4,_=>throw new InvalidDataException("Unknown difficulty")},
                     file,features:new MenuVisibility().Features,jumpSettings:jumpSettings));
-                squatError=analysis.SquatError;noteError=analysis.NoteError;squats=analysis.SquatCount;
+                duration=analysis.Duration;squatError=analysis.SquatError;noteError=analysis.NoteError;squats=analysis.SquatCount;
                 independentDensity=analysis.IndependentDensity;densityError=analysis.DensityError;densitySegments=analysis.Corrected.Segments.Length;
                 if(noteError==null||independentDensity)
                 {densityValues=analysis.Corrected.Segments;densitySha256=Comparison.Hash(JsonConvert.SerializeObject(densityValues));}
@@ -52,7 +52,12 @@ static class NoodleMenuCoverage
             catch(DirectoryNotFoundException e){status="unavailable";error=e.Message;}
             catch(Exception e){status="error";error=e.Message;errors++;}
             if(differences.Count>0)regressions++;
-            results.Add(new{source,status,previousStatus=(string?)previous["status"],previousMenuStatus,metrics,medianLeft,medianRight,squats,squatError,noteError,independentDensity,densityError,densitySegments,densitySha256,densityValues,error,differences});
+            // Fingerprint metadata independently of status; an unreadable context
+            // must not reclassify the actual menu result or validate later parity.
+            if(mapSha256!=null)try{infoSha256=Comparison.Hash(LocalMap.Info(request.Folder).ToString(Formatting.None));}
+            catch(Exception e) when(e is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException){}
+            results.Add(new{source,status,mapSha256,analysisContext=new{features=(int)new MenuVisibility().Features,jump=jumpSettings?.CacheIdentity??"unknown",
+                request.Characteristic,request.Difficulty,request.File,infoSha256,duration},previousStatus=(string?)previous["status"],previousMenuStatus,metrics,medianLeft,medianRight,squats,squatError,noteError,independentDensity,densityError,densitySegments,densitySha256,densityValues,error,differences});
         }
         if(results.Count==0)throw new InvalidDataException("No bounded source cases");
         File.WriteAllText(output,JsonConvert.SerializeObject(results,Formatting.Indented));

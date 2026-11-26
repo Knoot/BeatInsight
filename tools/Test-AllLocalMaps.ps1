@@ -10,15 +10,16 @@ param(
 $ErrorActionPreference = 'Stop'
 $workspace = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'LocalSettings.ps1')
+$previousArtifactRoot=$env:BEATINSIGHT_LOCAL_ROOT
+try {
+$env:BEATINSIGHT_LOCAL_ROOT=Get-BeatInsightLocalRoot
 . (Join-Path $PSScriptRoot 'MapInventory.ps1')
 $GameRoot = Get-BeatInsightSetting 'GameRoot' $GameRoot
 $MapsRoot = Get-BeatInsightSetting 'MapsRoot' $MapsRoot $GameRoot
 $MapsRoot = (Resolve-Path -LiteralPath $MapsRoot).Path
 $GameRoot = (Resolve-Path -LiteralPath $GameRoot).Path
-if (!$OutputDirectory) { $OutputDirectory = Join-Path $workspace ('.local/runs/' + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
-$OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
-$workspacePrefix = [IO.Path]::GetFullPath($workspace).TrimEnd('\') + '\'
-if (!$OutputDirectory.StartsWith($workspacePrefix,[StringComparison]::OrdinalIgnoreCase)) { throw 'OutputDirectory must stay inside BeatInsight workspace.' }
+if (!$OutputDirectory) { $OutputDirectory = Join-Path (Get-BeatInsightLocalRoot) ('runs/' + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
+$OutputDirectory=Resolve-BeatInsightOutputDirectory $OutputDirectory
 if (Test-Path -LiteralPath $OutputDirectory) { throw 'Choose a new OutputDirectory; existing results will not be overwritten.' }
 $project = Join-Path $workspace 'tools/BeatInsight.Compare/BeatInsight.Compare.csproj'
 $cache = Get-BeatInsightSetting 'NuGetPackageRoot'
@@ -146,3 +147,5 @@ Write-Host 'Selective menu analysis:'
 $menuCounts | Format-Table -AutoSize
 if ($counts.mismatch -or $counts.error -or $counts.timeout -or $counts.crash -or $inventoryErrors.Count -or $menuCounts.error) { exit 2 }
 if ($counts.unsupported) { exit 3 }
+
+} finally { $env:BEATINSIGHT_LOCAL_ROOT=$previousArtifactRoot }

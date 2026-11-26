@@ -199,7 +199,9 @@ namespace BeatInsight.WallAlert
 
             ApplyLaneCoverage(laneEnds, new CrouchWallPart(
                 obstacle.beat,
-                Math.Max(obstacle.endBeat, obstacle.beat + obstacle.duration),
+                // Loaded runtime duration is seconds; coverage is in beats.
+                // The supplied beat endpoint is authoritative in this path.
+                obstacle.endBeat,
                 obstacle.lineIndex,
                 obstacle.width,
                 1,

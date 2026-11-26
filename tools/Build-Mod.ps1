@@ -4,11 +4,12 @@ param([string]$GameRoot,[string]$OutputDirectory)
 $ErrorActionPreference='Stop'
 $workspace=Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'LocalSettings.ps1')
+$previousArtifactRoot=$env:BEATINSIGHT_LOCAL_ROOT
+try {
+$env:BEATINSIGHT_LOCAL_ROOT=Get-BeatInsightLocalRoot
 $GameRoot=Get-BeatInsightSetting GameRoot $GameRoot
-if(!$OutputDirectory){$OutputDirectory=Join-Path $workspace ('.local/mod-builds/'+(Get-Date -Format 'yyyyMMdd-HHmmss'))}
-$OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
-$prefix=[IO.Path]::GetFullPath($workspace).TrimEnd('\')+'\'
-if(!$OutputDirectory.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'OutputDirectory must stay inside the workspace.'}
+if(!$OutputDirectory){$OutputDirectory=Join-Path (Get-BeatInsightLocalRoot) ('mod-builds/'+(Get-Date -Format 'yyyyMMdd-HHmmss'))}
+$OutputDirectory=Resolve-BeatInsightOutputDirectory $OutputDirectory
 if(Test-Path -LiteralPath $OutputDirectory){throw 'Choose a new output directory; existing packages will not be overwritten.'}
 New-Item -ItemType Directory -Path $OutputDirectory|Out-Null
 $artifacts=Join-Path $OutputDirectory '.build'
@@ -27,3 +28,5 @@ $archive=Join-Path $OutputDirectory ("BeatInsight-$($manifest.gameVersion).zip")
 [IO.Compression.ZipFile]::CreateFromDirectory($package,$archive)
 Write-Host "Package: $archive"
 Write-Host 'Package was not installed. Game runtime behavior still requires live verification.'
+
+} finally { $env:BEATINSIGHT_LOCAL_ROOT=$previousArtifactRoot }

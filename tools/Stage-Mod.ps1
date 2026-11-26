@@ -4,13 +4,16 @@ param([Parameter(Mandatory)][string]$PackageDirectory,[string]$GameRoot)
 $ErrorActionPreference='Stop'
 $workspace=Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'LocalSettings.ps1')
+$previousArtifactRoot=$env:BEATINSIGHT_LOCAL_ROOT
+try {
+$env:BEATINSIGHT_LOCAL_ROOT=Get-BeatInsightLocalRoot
 $GameRoot=[IO.Path]::GetFullPath((Get-BeatInsightSetting GameRoot $GameRoot))
 $PackageDirectory=(Resolve-Path -LiteralPath $PackageDirectory).Path
 & (Join-Path $PSScriptRoot 'Test-ModPackage.ps1') -GameRoot $GameRoot -PackageDirectory $PackageDirectory
 $pending=[IO.Path]::GetFullPath((Join-Path $GameRoot 'IPA/Pending'))
 $allowedPrefix=$pending.TrimEnd('\')+'\'
 $files=@('Plugins/BeatInsight.dll','Libs/BeatInsight.Core.dll','Libs/BeatInsight.Formats.dll','Libs/BeatInsight.WallAlert.dll')
-$backup=Join-Path $workspace ('.local/staging/'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[Guid]::NewGuid().ToString('N').Substring(0,8))
+$backup=Join-Path (Get-BeatInsightLocalRoot) ('staging/'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[Guid]::NewGuid().ToString('N').Substring(0,8))
 New-Item -ItemType Directory -Path $backup|Out-Null
 $entries=[Collections.Generic.List[object]]::new()
 foreach($relative in $files){
@@ -45,3 +48,5 @@ try {
 }
 Write-Host "Staged $($entries.Count) own assemblies under IPA/Pending. Other pending files were left in place."
 Write-Host "Backup and report: $backup"
+
+} finally { $env:BEATINSIGHT_LOCAL_ROOT=$previousArtifactRoot }

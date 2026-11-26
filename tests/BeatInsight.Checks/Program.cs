@@ -59,8 +59,7 @@ Equal(own[0].NormalizedPosition!.Value,.25);
 Equal(own[0].SongTimeSeconds!.Value,25); // Never divide song position by speed a second time.
 var stale=DeathHistory.OwnMarkers([new(){MapKey=death.MapKey,BeatmapSha256="old",SongTimeSeconds=10}],death.MapKey,100,"new");
 Check(stale[0].PositionStatus=="beatmap-changed"&&stale[0].SongTimeSeconds==null,"Changed beatmap is flagged");
-string projectRoot=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"../../../../../"));
-string scratch=Path.Combine(projectRoot,".local","history-checks",Guid.NewGuid().ToString("N"));
+string scratch=BeatInsight.Tooling.LocalArtifacts.PathFor("history-checks",Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(scratch);
 string file=Path.Combine(scratch,DeathHistoryStore.FileName),legacyFile=Path.Combine(scratch,"SongPlayData.json");
 File.WriteAllText(legacyFile,"{\"legacy\":[]}");string before=File.ReadAllText(legacyFile);
@@ -85,7 +84,7 @@ refused=false;try{DeathHistoryStore.Append(file,death);}catch(InvalidDataExcepti
 Check(refused,"Never overwrite future schema");
 File.WriteAllText(file,"{\"schemaVersion\":1,\"deaths\":[{}]}");
 Check(DeathHistoryStore.Read(file).Status=="invalid-data","Missing song time is not invented as zero");
-LoadedMap LoadSynthetic(JObject data,JObject? audioData=null,AnalysisFeatures features=AnalysisFeatures.All,float initialBpm=120,string[]? requiredExtensions=null,float movementSpeed=0,string characteristic="Standard")
+LoadedMap LoadSynthetic(JObject data,JObject? audioData=null,AnalysisFeatures features=AnalysisFeatures.All,float initialBpm=120,string[]? requiredExtensions=null,float movementSpeed=0,string characteristic="Standard",bool includeSwingWindowWalls=true)
 {
     var folder=Path.Combine(scratch,Guid.NewGuid().ToString("N"));Directory.CreateDirectory(folder);
     var info=new JObject { ["version"]="4.0.1",["audio"]=new JObject {["bpm"]=initialBpm,["songDuration"]=100,["audioDataFilename"]="AudioData.dat"},
@@ -93,9 +92,99 @@ LoadedMap LoadSynthetic(JObject data,JObject? audioData=null,AnalysisFeatures fe
     if(requiredExtensions!=null)info["difficultyBeatmaps"]![0]!["customData"]=new JObject {["requirements"]=new JArray(requiredExtensions)};
     File.WriteAllText(Path.Combine(folder,"Info.dat"),info.ToString());File.WriteAllText(Path.Combine(folder,"map.dat"),data.ToString());
     if(audioData!=null)File.WriteAllText(Path.Combine(folder,"AudioData.dat"),audioData.ToString());
-    return LocalMap.Load(LocalMap.Cases(folder).Single(),features);
+    return LocalMap.Load(LocalMap.Cases(folder).Single(),features,includeSwingWindowWalls);
+}
+using(var visualStream=System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("BeatInsight.IsolatedVisualTrack.json")!)
+using(var visualReader=new StreamReader(visualStream))
+{
+    var source=JObject.Parse(visualReader.ReadToEnd());
+    var vanilla=(JObject)source.DeepClone();vanilla.Remove("customData");
+    foreach(var note in vanilla["colorNotes"]!)((JObject)note).Remove("customData");
+    var baseline=LoadSynthetic(vanilla);
+    foreach(bool arrays in new[]{false,true})foreach(bool constant in new[]{false,true})foreach(int repeat in new[]{0,2})
+    {
+        var root=(JObject)source.DeepClone();var data=root["customData"]!["customEvents"]![2]!["d"]!;
+        if(arrays){foreach(var note in root["colorNotes"]!)note["customData"]!["track"]=new JArray("notes","other");data["track"]=new JArray("notes","other");}
+        if(constant)data["color"]=new JArray(.25,.5,2,.75);
+        data["repeat"]=repeat;
+        var actual=LoadSynthetic(root,requiredExtensions:["Noodle Extensions","Chroma"]);
+        Check(Newtonsoft.Json.JsonConvert.SerializeObject(actual.Input)==Newtonsoft.Json.JsonConvert.SerializeObject(baseline.Input),"Isolated visual note tracks preserve prepared geometry, arcs and timing");
+        Check(actual.Json==root.ToString(),"Visual track admission preserves original JSON and fingerprint input");
+    }
+    foreach(bool arcOnly in new[]{false,true})
+    {
+        var root=(JObject)source.DeepClone();root["sliders"]![0]!["customData"]=new JObject {["track"]="notes"};
+        if(arcOnly)foreach(var note in root["colorNotes"]!)((JObject)note["customData"]!).Remove("track");
+        Check(Newtonsoft.Json.JsonConvert.SerializeObject(LoadSynthetic(root,requiredExtensions:["Noodle Extensions","Chroma"]).Input)==Newtonsoft.Json.JsonConvert.SerializeObject(baseline.Input),"Color-only arc/shared note bindings preserve prepared gameplay geometry");
+    }
+    var opacityRoot=(JObject)source.DeepClone();opacityRoot["customData"]!["customEvents"]![2]!["d"]!["dissolve"]=new JArray(.25);
+    opacityRoot["customData"]!["customEvents"]![2]!["d"]!["dissolveArrow"]=new JArray(.75);
+    Check(Newtonsoft.Json.JsonConvert.SerializeObject(LoadSynthetic(opacityRoot,requiredExtensions:["Noodle Extensions","Chroma"]).Input)==Newtonsoft.Json.JsonConvert.SerializeObject(baseline.Input),"Isolated combined color and opacity retain nominal geometry");
+    var shadowedPlayer=JObject.Parse("""{"version":"3.3.0","colorNotes":[{"b":1,"c":0,"d":1}],"customData":{"customEvents":[{"b":0,"t":"AssignPlayerToTrack","_type":"AnimateTrack","d":{"track":"player"}}]}}""");
+    bool shadowRejected=false;try{LoadSynthetic(shadowedPlayer,requiredExtensions:["Noodle Extensions"]);}catch(NotSupportedException){shadowRejected=true;}
+    Check(shadowRejected,"An ignored legacy event alias cannot hide a canonical v3 player assignment");
+    var ignoredPlayerAlias=(JObject)shadowedPlayer.DeepClone();ignoredPlayerAlias["customData"]!["customEvents"]![0]!["t"]="AnimateTrack";
+    ignoredPlayerAlias["customData"]!["customEvents"]![0]!["_type"]="AssignPlayerToTrack";
+    ignoredPlayerAlias["customData"]!["customEvents"]![0]!["d"]!["dissolve"]=new JArray(1);
+    Check(LoadSynthetic(ignoredPlayerAlias,requiredExtensions:["Noodle Extensions"]).Input.Notes.Length==1,"An ignored legacy type does not become a v3 player event");
+    var changes=new List<(string,Action<JObject>)> {
+        ("geometry",r=>r["customData"]!["customEvents"]![2]!["d"]!["offsetPosition"]=new JArray(1,0,0)),
+        ("path",r=>r["customData"]!["customEvents"]![2]!["t"]="AssignPathAnimation"),
+        ("environment",r=>r["customData"]!["environment"]![0]!["track"]="notes"),
+        ("environment-array",r=>r["customData"]!["environment"]![0]!["track"]=new JArray("scene","notes")),
+        ("material",r=>r["customData"]!["materials"]!["fixture"]!["track"]="notes"),
+        ("inline-material",r=>r["customData"]!["environment"]![0]!["geometry"]=new JObject {["type"]="Cube",["material"]=new JObject {["track"]="notes"}}),
+        ("parent",r=>r["customData"]!["customEvents"]![0]!["d"]!["parentTrack"]="notes"),
+        ("child",r=>r["customData"]!["customEvents"]![0]!["d"]!["childrenTracks"]=new JArray("notes")),
+        ("unknown-event",r=>((JArray)r["customData"]!["customEvents"]!).Add(new JObject {["b"]=0,["t"]="InvokeEvent",["d"]=new JObject()})),
+        ("player",r=>((JArray)r["customData"]!["customEvents"]!).Add(new JObject {["b"]=0,["t"]="AssignPlayerToTrack",["d"]=new JObject {["track"]="player"}})),
+        ("invalid-color",r=>r["customData"]!["customEvents"]![2]!["d"]!["color"]=new JArray(1,2,3)),
+        ("nonfinite-color",r=>r["customData"]!["customEvents"]![2]!["d"]!["color"]=new JArray(1,2,double.NaN,1)),
+        ("named-color",r=>r["customData"]!["customEvents"]![2]!["d"]!["color"]="color definition"),
+        ("duplicate-color-time",r=>r["customData"]!["customEvents"]![2]!["d"]!["color"]![1]![4]=0),
+        ("unknown-easing",r=>((JArray)r["customData"]!["customEvents"]![2]!["d"]!["color"]![1]!).Add("unknown")),
+        ("fractional-repeat",r=>r["customData"]!["customEvents"]![2]!["d"]!["repeat"]=1.5),
+        ("negative-duration",r=>r["customData"]!["customEvents"]![2]!["d"]!["duration"]=-1),
+        ("fake-shared",r=>{var n=(JObject)r["colorNotes"]![0]!.DeepClone();n["customData"]!["NE_fake"]=true;((JArray)r["colorNotes"]!).Add(n);}),
+        ("bomb-shared",r=>r["bombNotes"]=new JArray(new JObject {["b"]=4,["x"]=0,["y"]=0,["customData"]=new JObject {["track"]="notes"}})),
+        ("wall-shared",r=>r["obstacles"]=new JArray(new JObject {["b"]=4,["x"]=0,["y"]=2,["w"]=4,["h"]=3,["d"]=1,["customData"]=new JObject {["track"]="notes"}})),
+        ("object-animation",r=>r["colorNotes"]![0]!["customData"]!["animation"]=new JObject {["scale"]=new JArray(.5,.5,.5)}),
+        ("legacy-root",r=>r["_customData"]=new JObject {["_environment"]=new JArray(new JObject())}),
+        ("legacy-track",r=>r["colorNotes"]![0]!["customData"]!["_track"]="notes"),
+        ("malformed-material",r=>r["customData"]!["materials"]!["fixture"]="invalid")
+    };
+    foreach(var (name,change) in changes)
+    {
+        var root=(JObject)source.DeepClone();change(root);bool rejected=false;
+        try{LoadSynthetic(root,requiredExtensions:["Noodle Extensions","Chroma"]);}catch(NotSupportedException){rejected=true;}
+        Check(rejected,"Isolated visual track boundary: "+name);
+    }
 }
 var legacyBpm=LoadSynthetic(JObject.Parse("""{"_version":"2.0.0","_notes":[{"_time":1,"_type":0,"_cutDirection":1}],"_events":[{"_time":0,"_type":10,"_value":2,"_floatValue":1}]}"""));
+foreach(var raw in new[]{
+    JObject.Parse("""{"_version":"2.6.0","_notes":[{"_time":2,"_lineIndex":0,"_lineLayer":0,"_type":0,"_cutDirection":1},{"_time":4,"_lineIndex":3,"_lineLayer":1,"_type":1,"_cutDirection":0}],"_obstacles":[{"_time":6,"_duration":2,"_lineIndex":1,"_type":1,"_width":2}]}"""),
+    JObject.Parse("""{"version":"3.3.0","colorNotes":[{"b":2,"x":0,"y":0,"c":0,"d":1},{"b":4,"x":3,"y":1,"c":1,"d":0}],"obstacles":[{"b":6,"d":2,"x":1,"y":2,"w":2,"h":3}]}"""),
+    JObject.Parse("""{"version":"4.1.0","colorNotes":[{"b":2,"i":0},{"b":4,"i":1}],"colorNotesData":[{"x":0,"y":0,"c":0,"d":1},{"x":3,"y":1,"c":1,"d":0}],"obstacles":[{"b":6,"i":0}],"obstaclesData":[{"x":1,"y":2,"w":2,"h":3,"d":2}]}""")})
+{
+    var audio=JObject.Parse("""{"songFrequency":48000,"bpmData":[{"si":0,"ei":480000,"sb":0,"eb":20}]}""");
+    foreach(var mask in new[]{AnalysisFeatures.All,AnalysisFeatures.Average,AnalysisFeatures.FirstNotes,AnalysisFeatures.Density,AnalysisFeatures.Squats,AnalysisFeatures.OwnDeaths})
+    {
+        var disk=LoadSynthetic(raw,audio,features:mask);
+        var docs=MapDocuments.Bundled(raw.ToString(),audio.ToString(),120,100,"Standard","Expert");
+        var memory=LocalMap.LoadDocuments(docs,"Standard","Expert",mask);
+        Check(Newtonsoft.Json.JsonConvert.SerializeObject(disk.Input)==Newtonsoft.Json.JsonConvert.SerializeObject(memory.Input),"Memory/file map inputs agree across formats and requested features");
+        Check(memory.Json==raw.ToString()&&memory.Version==disk.Version&&memory.Bpm==disk.Bpm,"Document parsing preserves exact source/version/BPM");
+        Check(memory.Input.Duration==disk.Input.Duration,"Document duration respects hidden/visible timeline features");
+    }
+}
+var missingAudioDocs=MapDocuments.Bundled("""{"version":"4.1.0","colorNotes":[],"colorNotesData":[]}""",null,120,10,"Standard","Expert");
+bool documentAudioRejected=false;try{LocalMap.LoadDocuments(missingAudioDocs,"Standard","Expert");}catch(NotSupportedException){documentAudioRejected=true;}
+Check(documentAudioRejected,"V4 document data cannot silently fall back to filesystem AudioData");
+var missingDurationInfo=JObject.Parse("""{"version":"4.0.1","audio":{"bpm":120},"difficultyBeatmaps":[{"characteristic":"Standard","difficulty":"Expert","beatmapDataFilename":"beatmap.dat"}]}""");
+var missingDurationDocs=new MapDocuments(missingDurationInfo.ToString(),"""{"version":"3.3.0","colorNotes":[{"b":2,"c":0,"d":1}]}""");
+Check(LocalMap.LoadDocuments(missingDurationDocs,"Standard","Expert",AnalysisFeatures.Average).Input.Duration==0,"Hidden document timeline does not request unavailable audio duration");
+bool durationRejected=false;try{LocalMap.LoadDocuments(missingDurationDocs,"Standard","Expert",AnalysisFeatures.Density);}catch(NotSupportedException){durationRejected=true;}
+Check(durationRejected,"A visible document timeline requires a declared duration, without disk fallback");
 Equal(legacyBpm.Input.Notes[0].Time,30);
 var chainArc=LoadSynthetic(JObject.Parse("""{"version":"3.3.0","colorNotes":[{"b":4,"x":1,"y":0,"c":0,"d":1}],"sliders":[{"b":0,"x":3,"y":0,"c":0,"tb":4,"tx":3,"ty":0},{"b":4,"x":1,"y":0,"c":0,"tb":8,"tx":2,"ty":0}],"burstSliders":[{"b":4,"x":1,"y":0,"c":0,"d":1,"tb":4.5,"tx":1,"ty":1,"sc":4,"s":1}]}"""));
 Equal(chainArc.Input.Notes.Length,2); // Later arc head annotation preserves both raw head and synthetic chain head.
@@ -227,6 +316,12 @@ Check(warnings.Observe(1,2,1,1,1,2,3),"Restart or rewind resets sequence suppres
 warnings.Reset();
 Check(!warnings.Observe(1,1.1f,.1f,1,1,1,3)
     &&!warnings.Observe(1.3f,2,0.7f,2,1,1,3),"Expired lane coverage cannot complete a later squat");
+warnings.Reset();
+Check(!warnings.Observe(1,2,2,1,1,1,3)&&!warnings.Observe(2.3f,3.3f,2,2,1,1,3),
+    "Slow-tempo duration seconds cannot extend beat-domain lane coverage");
+warnings.Reset();
+Check(!warnings.Observe(1,2,2,1,1,1,3)&&warnings.Observe(1.5f,2.5f,2,2,1,1,3),
+    "A genuine beat-domain overlap still emits a squat with long duration seconds");
 warnings.Reset();
 Check(warnings.Observe(1,2,1,1,3,2,1),"Out-of-range loaded layer uses ordinary Top spawn height");
 Check(!warnings.Observe(1,2,1,1,1,0,3),"Zero width wall does not warn");
@@ -2208,5 +2303,121 @@ foreach(var densityStructured in new[]{v2ArcGeometry,noodleBurstMap})
         .SequenceEqual(CompatibleAnalysis.Analyze(densitySelective.Input,reproduceKnownDefects:false,features:AnalysisFeatures.Density).Segments),
         "Previously validated arcs/chains keep their normal density path");
     Check(densitySelective.Features.Contains("noodle-density-only")==(densityStructured["burstSliders"]?.Any()==true),"Structured density uses the validated nominal row path for v3 chains");
+}
+// Combined extensions admit nominal density independently of geometry.
+var combinedRequirements=new[]{"Mapping Extensions","Noodle Extensions"};
+var combinedNominal=JObject.Parse("""{"version":"3.3.0","colorNotes":[{"b":2,"x":1500,"y":-2,"c":0,"d":1,"customData":{"coordinates":[0.25,1]}},{"b":4,"x":-2,"y":0,"c":1,"d":1}],"sliders":[{"b":2,"x":1500,"y":-2,"c":0,"tb":4,"tx":-2,"ty":0}],"customData":{"customEvents":[{"b":0,"t":"AssignPlayerToTrack","d":{"track":"player"}}]}}""");
+for(int mask=0;mask<512;mask++)
+{
+    var selectedFeatures=(AnalysisFeatures)mask;
+    bool expected=(selectedFeatures&~AnalysisFeatures.OwnDeaths)==0
+        ||(selectedFeatures&AnalysisFeatures.Density)!=0&&(selectedFeatures&~(AnalysisFeatures.Density|AnalysisFeatures.OwnDeaths))==0;
+    bool accepted=false;
+    try
+    {
+        var combinedLoaded=LoadSynthetic(combinedNominal,features:selectedFeatures,requiredExtensions:combinedRequirements);
+        accepted=true;
+        Check(combinedLoaded.Json==combinedNominal.ToString(),"Combined projection retains immutable source: "+mask);
+        Check(combinedLoaded.Input.Notes.Length==((selectedFeatures&AnalysisFeatures.Density)!=0?2:0),"Combined projection selects only requested nominal notes: "+mask);
+    }
+    catch(NotSupportedException){}
+    Check(accepted==expected,"Combined extension feature boundary: "+mask);
+}
+foreach(string blocked in new[]{"bomb","chain","fake-chain","invalid-bombs","invalid-arcs","fake-arc","v2","v4"})
+{
+    var root=(JObject)combinedNominal.DeepClone();
+    if(blocked=="bomb")root["bombNotes"]=new JArray(new JObject{["b"]=1});
+    if(blocked=="chain")root["burstSliders"]=new JArray(new JObject{["b"]=1});
+    if(blocked=="fake-chain")root["customData"]!["fakeBurstSliders"]=new JArray(new JObject());
+    if(blocked=="invalid-bombs")root["bombNotes"]="invalid";
+    if(blocked=="invalid-arcs")root["sliders"]="invalid";
+    if(blocked=="fake-arc")root["sliders"]![0]!["customData"]=new JObject{["NE_fake"]=true};
+    if(blocked=="v2")root["version"]="2.6.0";
+    if(blocked=="v4")root["version"]="4.0.0";
+    bool rejected=false;try{LoadSynthetic(root,features:AnalysisFeatures.Density,requiredExtensions:combinedRequirements);}catch(NotSupportedException){rejected=true;}
+    Check(rejected,"Combined density retains unvalidated boundary: "+blocked);
+}
+var combinedStandard=JObject.Parse("""{"version":"3.3.0","colorNotes":[{"b":2,"x":0,"y":0,"c":0,"d":1},{"b":4,"x":1,"y":1,"c":1,"d":8},{"b":6,"x":1,"y":0,"c":0,"d":0,"customData":{"coordinates":[-1,0.5]}}],"sliders":[{"b":2,"x":0,"y":0,"c":0,"d":1,"tb":4,"tx":1,"ty":1,"tc":8}],"obstacles":[{"b":1,"x":1500,"y":1500,"w":2500,"h":1500,"d":4}]}""");
+for(int mask=0;mask<512;mask++)
+{
+    bool accepted=false;var combinedFlags=(AnalysisFeatures)mask;
+    try
+    {
+        var current=LoadSynthetic(combinedStandard,features:combinedFlags,requiredExtensions:combinedRequirements,includeSwingWindowWalls:false);accepted=true;
+        Check(current.Json==combinedStandard.ToString(),"Canonical combined note source stays immutable: "+mask);
+        Check(current.Input.Walls.Length==0,"Combined note-only admission never computes hidden wall geometry: "+mask);
+    }
+    catch(NotSupportedException){}
+    catch(ArgumentException)when((combinedFlags&(AnalysisFeatures.Squats|AnalysisFeatures.Reference))!=0){}
+    Check(accepted==((combinedFlags&(AnalysisFeatures.Squats|AnalysisFeatures.Reference))==0),"Canonical combined feature boundary: "+mask);
+}
+foreach(string kind in new[]{"head","tail","near-head","near-tail","arc-coordinate","fake-array","encoded-direction","extended-column","extended-layer"})
+{
+    var changed=(JObject)combinedStandard.DeepClone();
+    if(kind is "head" or "tail" or "near-head" or "near-tail")changed["colorNotes"]![2]!["b"]=kind switch {"head"=>2f,"tail"=>4f,"near-head"=>2.002f,_=>3.998f};
+    if(kind=="arc-coordinate")changed["sliders"]![0]!["customData"]=new JObject{["coordinates"]=new JArray(0,1)};
+    if(kind=="fake-array")changed["customData"]=new JObject{["fakeColorNotes"]=new JArray(new JObject{["b"]=1})};
+    if(kind=="encoded-direction")changed["colorNotes"]![0]!["d"]=1050;
+    if(kind=="extended-column")changed["colorNotes"]![0]!["x"]=1500;
+    if(kind=="extended-layer")changed["colorNotes"]![0]!["y"]=1500;
+    bool blocked=false;try{LoadSynthetic(changed,features:AnalysisFeatures.FirstNotes,requiredExtensions:combinedRequirements,includeSwingWindowWalls:false);}catch(NotSupportedException){blocked=true;}
+    if(kind is "extended-column" or "extended-layer")
+    {
+        Check(!blocked,"Extended combined coordinates allow nominal metrics without tilt: "+kind);
+        var projected=LoadSynthetic(changed,features:AnalysisFeatures.FirstNotes,requiredExtensions:combinedRequirements,includeSwingWindowWalls:false);
+        Check(projected.Features.Contains("noodle-nominal-notes")&&projected.Input.Notes.All(n=>!n.CutDirectionAngleOffset.HasValue),"Nominal coordinates never expose a physical tilt: "+kind);
+    }
+    else if(kind is "fake-array" or "encoded-direction")Check(blocked,"Canonical combined note ownership/geometry boundary: "+kind);
+    else Check(!blocked,"Combined ordinary arc raw/custom roles are admitted: "+kind);
+    Check(LoadSynthetic(changed,features:AnalysisFeatures.Density,requiredExtensions:combinedRequirements).Input.Notes.Count(n=>!n.IsFake)==3,"Combined ownership boundary preserves independently validated graph: "+kind);
+}
+foreach(string mode in new[]{"Lightshow","90Degree","360Degree","UnknownMode"})
+{
+    bool blocked=false;try{LoadSynthetic(combinedStandard,features:AnalysisFeatures.FirstNotes,requiredExtensions:combinedRequirements,includeSwingWindowWalls:false,characteristic:mode);}catch(NotSupportedException){blocked=true;}
+    Check(blocked,"Combined canonical admission remains limited to validated flat modes: "+mode);
+}
+var nominalCombined=(JObject)combinedStandard.DeepClone();nominalCombined["colorNotes"]![0]!["x"]=1500;
+for(int mask=0;mask<512;mask++)
+{
+    var requested=(AnalysisFeatures)mask;bool accepted=false;
+    bool identity=(requested&~AnalysisFeatures.OwnDeaths)==0;
+    bool density=(requested&AnalysisFeatures.Density)!=0&&(requested&~(AnalysisFeatures.Density|AnalysisFeatures.OwnDeaths))==0;
+    bool visible=(requested&(AnalysisFeatures.Average|AnalysisFeatures.Peak|AnalysisFeatures.Median|AnalysisFeatures.FirstNotes))!=0;
+    try
+    {
+        var projected=LoadSynthetic(nominalCombined,features:requested,requiredExtensions:combinedRequirements,includeSwingWindowWalls:false);accepted=true;
+        Check(projected.Json==nominalCombined.ToString()&&projected.Input.Walls.Length==0,"Nominal source and hidden walls stay intact: "+mask);
+        Check(projected.Features.Contains("noodle-nominal-notes")==visible&&projected.Input.Notes.All(n=>!n.CutDirectionAngleOffset.HasValue),"Nominal feature masks never fabricate tilt or compute hidden orientation: "+mask);
+    }
+    catch(NotSupportedException){}
+    catch(ArgumentException)when((requested&(AnalysisFeatures.Squats|AnalysisFeatures.Reference))!=0){}
+    Check(accepted==((requested&(AnalysisFeatures.Squats|AnalysisFeatures.Reference))==0&&(identity||density||visible)),"Independent nominal note feature boundary: "+mask);
+}
+foreach(string forbidden in new[]{"player","track","rotation","animation","speed","coordinate-reference","fake-array","bomb","chain","fake-arc","unknown-root","invalid-direction","invalid-anchor"})
+{
+    var changed=(JObject)nominalCombined.DeepClone();var note=(JObject)changed["colorNotes"]![0]!;
+    if(forbidden=="player")changed["customData"]=JObject.Parse("""{"customEvents":[{"b":0,"t":"AssignPlayerToTrack","d":{"track":"player"}}]}""");
+    if(forbidden=="track")note["customData"]=new JObject{["track"]="track"};
+    if(forbidden=="rotation")note["customData"]=new JObject{["worldRotation"]=new JArray(0,0,30)};
+    if(forbidden=="animation")note["customData"]=new JObject{["animation"]=new JObject{["offsetPosition"]=new JArray(1,0,0)}};
+    if(forbidden=="speed")changed["njsEvents"]=new JArray(new JObject{["b"]=0});
+    if(forbidden=="coordinate-reference")note["customData"]=new JObject{["coordinates"]="named"};
+    if(forbidden=="fake-array")changed["customData"]=new JObject{["fakeColorNotes"]=new JArray(new JObject())};
+    if(forbidden=="bomb")changed["bombNotes"]=new JArray(new JObject{["b"]=2});
+    if(forbidden=="chain")changed["burstSliders"]=new JArray(new JObject{["b"]=2});
+    if(forbidden=="fake-arc")changed["sliders"]![0]!["customData"]=new JObject{["NE_fake"]=true};
+    if(forbidden=="unknown-root")changed["customData"]=new JObject{["unknownGameplay"]=true};
+    if(forbidden=="invalid-direction")note["d"]=1000;
+    if(forbidden=="invalid-anchor")note["customData"]=new JObject{["_isAnchor"]="invalid"};
+    bool blocked=false;try{LoadSynthetic(changed,features:AnalysisFeatures.FirstNotes|AnalysisFeatures.Average,requiredExtensions:combinedRequirements,includeSwingWindowWalls:false);}catch(NotSupportedException){blocked=true;}
+    Check(blocked,"Nominal combined metrics retain angular/ownership boundary: "+forbidden);
+}
+{
+    var roles=JObject.Parse("""{"version":"3.3.0","colorNotes":[{"b":2,"x":0,"y":0,"c":0,"d":1},{"b":4,"x":2,"y":0,"c":0,"d":1},{"b":4,"x":3,"y":1,"c":1,"d":1}],"sliders":[{"b":2,"x":0,"y":0,"c":0,"d":1,"tb":4,"tx":2,"ty":0,"tc":1},{"b":4,"x":2,"y":0,"c":1,"d":1,"tb":6,"tx":0,"ty":2,"tc":1,"customData":{"coordinates":[1,1]}}]}""");
+    var standalone=LoadSynthetic(roles,features:AnalysisFeatures.FirstNotes,requiredExtensions:noodleCapability,includeSwingWindowWalls:false);
+    var combined=LoadSynthetic(roles,features:AnalysisFeatures.FirstNotes,requiredExtensions:combinedRequirements,includeSwingWindowWalls:false);
+    Check(standalone.Input.Notes[1].ScoringType==3&&combined.Input.Notes[1].ScoringType==6,"Combined arc tail keeps its raw head while standalone custom rows do not inherit it");
+    Check(combined.Input.Notes[2].ScoringType==2&&standalone.Input.Notes[2].ScoringType==2,"Custom head matches remain additive after raw roles");
+    Check(combined.Json==roles.ToString()&&combined.HasNoodleGeometry,"Combined arc ownership keeps source identity and unverified Legacy indices");
 }
 Console.WriteLine($"Passed {checks} checks.");

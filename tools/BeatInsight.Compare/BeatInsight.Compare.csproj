@@ -4,6 +4,9 @@
     <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../LocalArtifacts.cs" Link="LocalArtifacts.cs" />
+    <EmbeddedResource Include="../../tests/fixtures/isolated-visual-track.json" LogicalName="BeatInsight.IsolatedVisualTrack.json" />
+    <EmbeddedResource Include="../../tests/fixtures/unity-rotation-math.json" LogicalName="BeatInsight.Compare.UnityRotationMath.json" />
     <ProjectReference Include="../../src/BeatInsight.Core/BeatInsight.Core.csproj" />
     <ProjectReference Include="../../src/BeatInsight.Formats/BeatInsight.Formats.csproj" />
     <ProjectReference Include="../../src/BeatInsight.WallAlert/BeatInsight.WallAlert.csproj" />

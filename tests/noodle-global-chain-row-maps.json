@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "maps": [
+    {
+      "Folder": "3fa86 (Six Feet Under - HickeyChan)",
+      "Characteristic": "Standard",
+      "Difficulty": "Hard",
+      "File": "HardStandard.dat"
+    },
+    {
+      "Folder": "46e6c (Don't Care Crown - MadChase)",
+      "Characteristic": "Standard",
+      "Difficulty": "Normal",
+      "File": "NormalStandard.dat"
+    },
+    {
+      "Folder": "30075 (Hank's Back - Aurellis)",
+      "Characteristic": "Standard",
+      "Difficulty": "ExpertPlus",
+      "File": "ExpertPlusStandard.dat"
+    },
+    {
+      "Folder": "3730d (Hours - Darkrealm7)",
+      "Characteristic": "Lawless",
+      "Difficulty": "ExpertPlus",
+      "File": "ExpertPlusLawless.dat"
+    },
+    {
+      "Folder": "45c22 (Pump - ShayXavi)",
+      "Characteristic": "Standard",
+      "Difficulty": "ExpertPlus",
+      "File": "ExpertPlusStandard.dat"
+    },
+    {
+      "Folder": "4af67 (Zero To Hero - Beatboo)",
+      "Characteristic": "Standard",
+      "Difficulty": "Easy",
+      "File": "EasyStandard.dat"
+    },
+    {
+      "Folder": "53131 (Hug Me In! - \u3046\u3044\u3070\u30fc -wibar- ,Shosa)",
+      "Characteristic": "Lawless",
+      "Difficulty": "Hard",
+      "File": "HardLawless.dat"
+    },
+    {
+      "Folder": "53e8a (Take on Me - ImChloe, Tonkie, professor_calculus)",
+      "Characteristic": "Standard",
+      "Difficulty": "ExpertPlus",
+      "File": "ExpertPlusStandard.dat"
+    }
+  ]
+}

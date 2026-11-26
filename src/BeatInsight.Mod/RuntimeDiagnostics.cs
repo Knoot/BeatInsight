@@ -20,6 +20,8 @@ internal static class RuntimeDiagnostics
 {
     const int Limit=512;
     const int TransitionSampleLimit=12;
+    const int NoteSampleLimit=3;
+    const int NotePoseLimit=12;
     static readonly Stopwatch clock=new Stopwatch();
     static readonly HashSet<MethodBase> installed=new();
     static readonly HashSet<Assembly> identified=new();
@@ -32,6 +34,9 @@ internal static class RuntimeDiagnostics
     static string session="",map="";
     static object? attemptData;
     static readonly List<WeakReference<object>> watched=new();
+    static readonly List<(WeakReference<NoteController> Controller,WeakReference<NoteData> Data)> sampledNotes=new();
+    static int noteSamples,notePoseSamples;
+    static bool rowPatchesSampled;
     static CancellationTokenSource? samples;
     internal static long AttemptId=>Interlocked.Read(ref attempt);
     internal static bool CanRecord=>active&&Plugin.Config.DiagnosticLogging&&Volatile.Read(ref emitted)<Limit;
@@ -40,8 +45,44 @@ internal static class RuntimeDiagnostics
     {
         active=true;mainThread=Thread.CurrentThread.ManagedThreadId;session=Guid.NewGuid().ToString("N");
         clock.Restart();patches=new Harmony("arevu.beatinsight.diagnostics");
-        Record("diagnostics.enabled",new{schema=1,limit=Limit,transitionSampleLimit=TransitionSampleLimit,assembly=typeof(Plugin).Assembly.GetName().Version?.ToString()});
-        Identify(typeof(Plugin).Assembly);Discover();
+        Record("diagnostics.enabled",new{schema=1,limit=Limit,transitionSampleLimit=TransitionSampleLimit,noteSampleLimit=NoteSampleLimit,notePoseLimit=NotePoseLimit,assembly=typeof(Plugin).Assembly.GetName().Version?.ToString()});
+        Identify(typeof(Plugin).Assembly);
+        Identify(typeof(BeatInsight.Core.CompatibleAnalysis).Assembly);
+        Identify(typeof(BeatInsight.Formats.LocalMap).Assembly);
+        Identify(typeof(BeatInsight.WallAlert.SquatWarningSequence).Assembly);
+        Discover();CaptureRotationMath();
+    }
+    // One bounded sample per diagnostics enable. No scene objects, mutations,
+    // gameplay callbacks or per-frame work; native Unity supplies the results.
+    static void CaptureRotationMath()
+    {
+        if(!CanRecord)return;
+        try
+        {
+            Identify(typeof(Quaternion).Assembly);
+            long started=clock.ElapsedMilliseconds;
+            var angles=new[]{
+                new Vector3(0,0,0),new Vector3(.75f,0,0),new Vector3(0,.75f,0),new Vector3(0,0,.75f),
+                new Vector3(-5,0,0),new Vector3(30,0,0),new Vector3(0,30,0),new Vector3(0,0,30),
+                new Vector3(90,0,0),new Vector3(0,90,0),new Vector3(0,0,90),
+                new Vector3(180,0,0),new Vector3(0,180,0),new Vector3(0,0,180),
+                new Vector3(360,0,0),new Vector3(0,360,0),new Vector3(0,0,360),
+                new Vector3(0,-30,0),new Vector3(0,-360,0),new Vector3(0,720,0),
+                new Vector3(12.25f,23.75f,34.5f),new Vector3(-15.5f,-25.25f,35.125f),
+                new Vector3(45,90,-30),new Vector3(180,90,270)};
+            float[] V(Vector3 v)=>new[]{v.x,v.y,v.z};
+            float[] Q(Quaternion q)=>new[]{q.x,q.y,q.z,q.w};
+            var rows=new List<object>(angles.Length);
+            foreach(var input in angles)
+            {
+                var vector=Quaternion.Euler(input);var scalar=Quaternion.Euler(input.x,input.y,input.z);
+                rows.Add(new{degrees=V(input),vector=Q(vector),scalar=Q(scalar),inverse=Q(Quaternion.Inverse(vector)),
+                    right=V(vector*Vector3.right),up=V(vector*Vector3.up),forward=V(vector*Vector3.forward)});
+            }
+            Record("rotation.math",new{schema=1,unity=Application.unityVersion,count=rows.Count,elapsedMs=clock.ElapsedMilliseconds-started,rows,
+                scope="native Unity Euler overloads and inverse; managed quaternion-vector product; no scene/player pose or map admission"});
+        }
+        catch(Exception e){Record("rotation.math.unavailable",new{error=e.GetType().Name});}
     }
     internal static void BeginAttempt(string key,object data)
     {
@@ -101,6 +142,7 @@ internal static class RuntimeDiagnostics
         Hook("Main","VRRenderingParamsSetup","OnEnable");
         Hook("Main","SettingsApplicatorSO","NotifyRoomTransformOffsetWasUpdated");
         Hook("Main","PlayerTransforms","Awake");
+        Hook("Main","NoteController","Init");
         Hook("Zenject","Zenject.MonoKernel","Initialize");
         Hook("BGLib.AppFlow","GameScenesManager","ActivatePresentedSceneRootObjects");
         Hook("BGLib.AppFlow","GameScenesManager","SetActiveRootObjectsInScenes");
@@ -122,6 +164,12 @@ internal static class RuntimeDiagnostics
             var target=provider.GetType(type)?.GetMethods(BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance|BindingFlags.Static|BindingFlags.DeclaredOnly).SingleOrDefault(m=>m.Name==name);
             if(target==null){Record("hook.unavailable",new{assembly,type,name});return;}
             if(installed.Contains(target))return;
+            if(type=="NoteController"&&name=="Init")
+            {
+                // Typed postfix: no __args array or boxing on every spawned note.
+                patches!.Patch(target,postfix:new HarmonyMethod(AccessTools.Method(typeof(RuntimeDiagnostics),nameof(NoteInitialized))){priority=Priority.Last});
+                installed.Add(target);Identify(provider);Record("hook.installed",new{assembly,type,name,noteSampleLimit=NoteSampleLimit});return;
+            }
             var prefix=AccessTools.Method(typeof(RuntimeDiagnostics),target.IsStatic?nameof(BeforeStatic):nameof(Before));
             var postfix=AccessTools.Method(typeof(RuntimeDiagnostics),target.ReturnType!=typeof(void)?nameof(AfterResult):target.IsStatic?nameof(AfterStatic):nameof(After));
             patches!.Patch(target,new HarmonyMethod(prefix),new HarmonyMethod(postfix));installed.Add(target);Identify(provider);
@@ -134,6 +182,83 @@ internal static class RuntimeDiagnostics
     static void BeforeStatic(MethodBase __originalMethod,object[] __args)=>Boundary("before",null,__originalMethod,__args,null);
     static void AfterStatic(MethodBase __originalMethod,object[] __args)=>Boundary("after",null,__originalMethod,__args,null);
     static void AfterResult(object __instance,MethodBase __originalMethod,object[] __args,object __result)=>Boundary("after",__instance,__originalMethod,__args,__result);
+    static void NoteInitialized(NoteController __instance)
+    {
+        if(!CanRecord||Volatile.Read(ref noteSamples)>=NoteSampleLimit||!RuntimeCapture.HasActiveAttempt
+            ||Thread.CurrentThread.ManagedThreadId!=mainThread)return;
+        try
+        {
+            if(!(__instance is GameNoteController)||__instance.noteData==null||(int)__instance.noteData.scoringType<=0)return;
+            var data=__instance.noteData;
+            sampledNotes.Add((new WeakReference<NoteController>(__instance),new WeakReference<NoteData>(data)));noteSamples++;
+            RecordNotePose("post-init-observer",__instance,noteSamples);
+        }
+        catch(Exception e){Record("note.pose.error",new{reason="post-init-observer",error=e.GetType().Name});}
+    }
+    static object? NoteMetadata(object? value,int depth=0)
+    {
+        if(value is string text&&text.Length>256)return new{value=text.Substring(0,256),length=text.Length,truncated=true};
+        var simple=Simple(value);if(simple!=null||value==null)return simple;
+        if(depth>=4)return new{type=value.GetType().Name,truncated=true};
+        if(value is IDictionary map)
+        {
+            var fields=new Dictionary<string,object?>();
+            foreach(string key in new[]{"track","_track","animation","_animation","scale","_scale","size","worldRotation","_rotation","localRotation","_localRotation","disableNoteGravity","_disableNoteGravity","disableNoteLook","_disableNoteLook"})
+                if(map.Contains(key))fields[key]=NoteMetadata(map[key],depth+1);
+            return fields;
+        }
+        if(value is IList list)return new{count=list.Count,values=list.Cast<object?>().Take(4).Select(v=>NoteMetadata(v,depth+1)).ToArray(),truncated=list.Count>4};
+        return new{type=value.GetType().Name};
+    }
+    static object? NoteBoxes(object? source)
+    {
+        if(!(source is IEnumerable boxes))return null;
+        var result=new List<object>();int seen=0;
+        foreach(var value in boxes)
+        {
+            if(seen++>=2)break;
+            if(!(value is BoxCuttableBySaber cuttable)||cuttable==null)continue;
+            var collider=Read(cuttable,"_collider") as BoxCollider;
+            object? bounds=null;
+            if(collider!=null){var b=collider.bounds;bounds=new{center=Simple(b.center),size=Simple(b.size),enabled=collider.enabled,active=collider.gameObject.activeInHierarchy};}
+            result.Add(new{canBeCut=cuttable.canBeCut,cuttable.radius,center=Simple(cuttable.colliderCenter),size=Simple(cuttable.colliderSize),
+                pose=Pose(cuttable.transform),bounds});
+        }
+        return result;
+    }
+    static object NoteSnapshot(NoteController controller)
+    {
+        var data=controller.noteData;
+        var wrapper=Read(controller,"_wrapperGO") as GameObject;
+        var clockSource=Read(controller,"_audioTimeSyncController");
+        return new{controllerId=controller.GetInstanceID(),dataId=RuntimeHelpers.GetHashCode(data),
+            data=new{data.time,data.beat,data.lineIndex,layer=(int)data.noteLineLayer,color=(int)data.colorType,direction=(int)data.cutDirection,
+                scoring=(int)data.scoringType,gameplay=(int)data.gameplayType,metadata=NoteMetadata(Read(data,"customData"))},
+            songTime=Simple(Read(clockSource,"songTime")),controller.uniformScale,controller.hidden,
+            visualModifier=Simple(Read(controller,"noteVisualModifierType")),root=Pose(controller.transform),visual=Pose(controller.noteTransform),
+            wrapper=wrapper==null?null:Pose(wrapper.transform),bigBoxes=NoteBoxes(Read(controller,"_bigCuttableBySaberList")),smallBoxes=NoteBoxes(Read(controller,"_smallCuttableBySaberList"))};
+    }
+    static void RecordNotePose(string reason,NoteController controller,int? ordinal=null)
+    {
+        if(!CanRecord||notePoseSamples>=NotePoseLimit)return;
+        notePoseSamples++;
+        long started=Stopwatch.GetTimestamp();var snapshot=NoteSnapshot(controller);
+        double snapshotMs=(Stopwatch.GetTimestamp()-started)*1000.0/Stopwatch.Frequency;
+        Record("note.pose",new{reason,ordinal,snapshotMs,snapshot});
+    }
+    static void SampleNotes(string reason)
+    {
+        if(!CanRecord||notePoseSamples>=NotePoseLimit||!RuntimeCapture.HasActiveAttempt||Thread.CurrentThread.ManagedThreadId!=mainThread)return;
+        for(int i=sampledNotes.Count-1;i>=0&&notePoseSamples<NotePoseLimit;i--)
+        {
+            var entry=sampledNotes[i];
+            if(!entry.Controller.TryGetTarget(out var controller)||controller==null){sampledNotes.RemoveAt(i);continue;}
+            if(!entry.Data.TryGetTarget(out var data)||!ReferenceEquals(controller.noteData,data))
+            {Record("note.pose.skipped",new{reason,controllerId=controller.GetInstanceID(),cause="pool-reused-or-data-collected"});sampledNotes.RemoveAt(i);continue;}
+            try{RecordNotePose(reason,controller);}
+            catch(Exception e){Record("note.pose.error",new{reason,error=e.GetType().Name});}
+        }
+    }
     static void Boundary(string phase,object? instance,MethodBase method,object[] args,object? result)
     {
         if(!CanRecord)return;
@@ -246,18 +371,45 @@ internal static class RuntimeDiagnostics
     }
     static void ResetSamples()
     {
-        samples?.Cancel();samples?.Dispose();samples=null;watched.Clear();transitionSamples=0;
+        samples?.Cancel();samples?.Dispose();samples=null;watched.Clear();transitionSamples=0;sampledNotes.Clear();noteSamples=0;notePoseSamples=0;rowPatchesSampled=false;
     }
     internal static void SongStart()
     {
         if(!CanRecord)return;
         try
         {
+            CaptureRowPatches();
             TakeSample("song-start");
             samples?.Cancel();samples?.Dispose();samples=new CancellationTokenSource();
             SampleLater(250,AttemptId,samples.Token);SampleLater(1500,AttemptId,samples.Token);
         }
         catch(Exception e){Record("sample.error",new{error=e.GetType().Name});}
+    }
+    // Read patch metadata once after map construction, before music. This is
+    // registration evidence, not an execution trace or a change to patch order.
+    static void CaptureRowPatches()
+    {
+        if(!CanRecord||rowPatchesSampled)return;
+        rowPatchesSampled=true;
+        try
+        {
+            var processor=typeof(NoteData).Assembly.GetType("BeatmapObjectsInTimeRowProcessor");
+            var rows=new List<object>();
+            foreach(string name in new[]{"HandleCurrentTimeSliceAllNotesAndSlidersDidFinishTimeSlice","HandleCurrentTimeSliceColorNotesDidFinishTimeSlice"})
+            {
+                var method=processor?.GetMethod(name,BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance);
+                var info=method==null?null:Harmony.GetPatchInfo(method);
+                object[] Describe(IEnumerable<Patch>? values)=>values==null?Array.Empty<object>():values.Take(32).Select(p=>(object)new
+                {
+                    p.owner,p.priority,p.index,p.before,p.after,
+                    assembly=p.PatchMethod.DeclaringType?.Assembly.GetName().Name,
+                    type=p.PatchMethod.DeclaringType?.FullName,method=p.PatchMethod.Name
+                }).ToArray();
+                rows.Add(new{name,available=method!=null,prefixes=Describe(info?.Prefixes),postfixes=Describe(info?.Postfixes),transpilers=Describe(info?.Transpilers)});
+            }
+            Record("rows.patches",new{schema=1,rows,scope="registration metadata; no patch invocation or reordering"});
+        }
+        catch(Exception e){Record("rows.patches.unavailable",new{error=e.GetType().Name});}
     }
     static async void SampleLater(int delay,long id,CancellationToken cancellation)
     {
@@ -284,6 +436,7 @@ internal static class RuntimeDiagnostics
                 catch(Exception e){nodes.Add(new{type=value.GetType().FullName,error=e.GetType().Name});}
             }
         Record("pose.sample",new{reason,nodes});
+        SampleNotes(reason);
     }
     internal static void Disable()
     {

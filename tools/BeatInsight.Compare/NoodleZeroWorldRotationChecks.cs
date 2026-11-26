@@ -74,7 +74,9 @@ static class NoodleZeroWorldRotationChecks
         failed+=(int)composition["failed"]!;
         var constructorComposition=Newtonsoft.Json.Linq.JObject.FromObject(NoodleRotationConstructorChecks.Run(gameRoot));
         failed+=(int)constructorComposition["failed"]!;
-        return new{schemaVersion=1,profileVersion=BeatInsight.Formats.LocalMap.AnalysisProfileVersion,cases,arcCases,failed,composition,constructorComposition,gameStarted=false,
-            scope="pinned constructor/controller IL audit, actual Heck quaternion mirror and Unity managed quaternion multiplication for identity; Euler(0,0,0) identity is a mathematical premise, native Unity Euler, extracted arc field-write/product IL executed, full spawn rotation and Transform lifecycle not executed; production requires no rotation events and a supported flat characteristic"};
+        var capturedComposition=Newtonsoft.Json.Linq.JObject.FromObject(NoodleRotationConstructorChecks.Run(gameRoot,RotationMathCapture.Load(gameRoot)));
+        failed+=(int)capturedComposition["failed"]!;
+        return new{schemaVersion=1,profileVersion=BeatInsight.Formats.LocalMap.AnalysisProfileVersion,cases,arcCases,failed,composition,constructorComposition,capturedComposition,gameStarted=false,
+            scope="pinned constructor/controller IL audit, actual Heck quaternion mirror and Unity managed quaternion multiplication for identity; Euler(0,0,0) identity is a mathematical premise, native Unity Euler is not executed in this host; capturedComposition replays game-captured Euler samples; extracted arc field-write/product IL executed, full spawn rotation and Transform lifecycle not executed; production requires no rotation events and a supported flat characteristic"};
     }
 }
